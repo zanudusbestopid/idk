@@ -233,7 +233,13 @@ export class GameScreen {
       this.opts.onIdle?.();
       return;
     }
+    for (const b of this.locked) b.disabled = false;
     this.locked = [];
+    for (const ev of events) {
+      if (ev.type === 'tradeProposed' && ev.trade.from === this.meId) this.modals.close('trade');
+      if (ev.type === 'tradeAccepted' && ev.trade.from === this.meId) toast(`${playerName(state, ev.trade.to)} accepted your trade`);
+      if (ev.type === 'tradeRejected' && ev.trade.from === this.meId) toast(`${playerName(state, ev.trade.to)} declined your trade`);
+    }
     this.queue.push(...events);
     if (!this.processing) void this.process();
   }
