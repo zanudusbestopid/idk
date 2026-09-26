@@ -9,9 +9,12 @@ import { rulesPanel } from './rules.js';
 import { T, THEME } from '../theme.js';
 import { SHEET_HELP, getCustomSheetUrl, setCustomSheetUrl, warmCharacters } from '../sprites.js';
 import { titleArt } from './titleart.js';
+import { hasPack, sheetSources } from '../art/pack.js';
 
 export interface SetupHandlers {
   onStart(setup: SoloSetup): void;
+  /** Opens the in-game art editor (private builds with an art pack). */
+  onEditArt?(): void;
   onResume(saved: SavedGame): void;
   /** Called with the current choices whenever they change, so the scene behind the menu can show them. */
   onPreview?(setup: SoloSetup): void;
@@ -89,6 +92,12 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
     h('p', { class: 'muted small', style: { margin: '6px 0' } }, SHEET_HELP),
     h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
       h('label', { class: 'btn btn--sm', for: 'setup-sheet' }, 'Load PNG…'), sheetInput, clearSheet, sheetStatus));
+  // Private builds with an art pack: the in-game art editor lives on the title screen so the board behind it shows every change.
+  const artRow = handlers.onEditArt && (hasPack() || sheetSources().length)
+    ? h('div', { class: 'art-row' },
+      h('button', { class: 'btn btn--sm btn--blue', type: 'button', id: 'setup-art', onClick: () => handlers.onEditArt?.() }, 'Open the art editor'),
+      h('span', { class: 'muted small' }, 'Cut sprites from the sheets, assign them to spaces, place scenery.'))
+    : null;
 
   const rulesHost = h('div');
   function renderRules(): void {
@@ -118,6 +127,7 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
     h('div', { class: 'field', style: { '--i': '2' } as unknown as Record<string, string> }, h('label', null, 'Computer opponents'), countRow, botsEl, diffRow),
     h('div', { class: 'field', style: { '--i': '3' } as unknown as Record<string, string> }, rules),
     h('div', { class: 'field', style: { '--i': '3' } as unknown as Record<string, string> }, sheetRow),
+    artRow ? h('div', { class: 'field', style: { '--i': '3' } as unknown as Record<string, string> }, artRow) : null,
     h('div', { class: 'field field--start', style: { '--i': '4' } as unknown as Record<string, string> }, startBtn),
   ];
   const card = h('div', { class: 'setup-card paper' }, ...fields);

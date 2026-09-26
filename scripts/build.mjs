@@ -2,7 +2,7 @@
 // client embedded, so the deliverable is one JavaScript file: dist/paper-tycoon.js
 import { build } from 'esbuild';
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 const watch = process.argv.includes('--watch');
 await mkdir('dist/public', { recursive: true });
@@ -10,7 +10,7 @@ await mkdir('dist/public', { recursive: true });
 // Build-time constants read by src/client/sprites.ts. The public build ships no
 // default sheet; `PT_SHEET=<png> PT_NAMES=a:#hex,b,...` (eight) additionally produces a
 // private build under dist/private with that sheet and those token names baked in.
-const PUBLIC_DEFINE = { __DEFAULT_SHEET__: 'null', __TOKEN_NAMES__: 'null', __THEME__: 'null', __THEME_PACK__: 'null' };
+const PUBLIC_DEFINE = { __DEFAULT_SHEET__: 'null', __TOKEN_NAMES__: 'null', __THEME__: 'null', __THEME_PACK__: 'null', __THEME_SHEETS__: 'null' };
 
 // 1. Client bundle (JS + CSS) → dist/public
 const client = await build({
@@ -122,11 +122,18 @@ if (process.env.PT_SHEET) {
     const img = await readFile(join(dirname(process.env.PT_PACK), manifest.image));
     pack = { image: `data:image/png;base64,${img.toString('base64')}`, sprites: manifest.sprites };
   }
+  // PT_SHEETS: comma-separated PNGs shipped raw for the in-game art editor (name = file name).
+  const sheets = [];
+  for (const file of (process.env.PT_SHEETS ?? '').split(',').map((f) => f.trim()).filter(Boolean)) {
+    const img = await readFile(file);
+    sheets.push({ name: basename(file), image: `data:image/png;base64,${img.toString('base64')}` });
+  }
   await buildSolo('dist/private', {
     __DEFAULT_SHEET__: JSON.stringify(sheet),
     __TOKEN_NAMES__: JSON.stringify(names.length === 8 ? names : null),
     __THEME__: JSON.stringify(process.env.PT_THEME ?? null),
     __THEME_PACK__: JSON.stringify(pack),
+    __THEME_SHEETS__: JSON.stringify(sheets),
   }, { title: process.env.PT_TITLE });
   console.log('Built private dist/private/paper-tycoon-solo.html and dist/private/artifact.html');
 }

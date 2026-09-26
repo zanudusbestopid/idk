@@ -9,6 +9,8 @@ import { Board3D, webglAvailable } from './ui/board3d.js';
 import { renderSetup } from './ui/setup.js';
 import { warmCharacters } from './sprites.js';
 import { loadPack } from './art/pack.js';
+import { loadArt } from './art/overrides.js';
+import { openArtEditor } from './ui/arteditor.js';
 import type { RoomView } from '../shared/protocol.js';
 import { DEFAULT_CONFIG, _forceNextRoll } from '../engine/engine.js';
 import { demoState } from './demo.js';
@@ -63,6 +65,11 @@ function showSetup(): void {
     onStart: (setup) => { lastSetup = setup; clearSaved(); leaveTitle(() => startGame(new LocalGame(setup))); },
     onResume: (saved: SavedGame) => { lastSetup = saved.setup; leaveTitle(() => startGame(new LocalGame(saved.setup, saved.state))); },
     onPreview: (setup) => { titleBoard?.build(demoFor(setup)); },
+    onEditArt: () => {
+      layer.classList.add('hidden');
+      titleBoard?.setMode('free');
+      openArtEditor(app, { board: titleBoard, onClose: () => { layer.classList.remove('hidden'); titleBoard?.setMode('cinematic'); } });
+    },
   }, loadSaved(), lastSetup);
 }
 
@@ -100,4 +107,4 @@ function startGame(game: LocalGame): void {
 }
 
 app.appendChild(h('div', { class: 'screen-center' }, h('div', { class: 'paper', style: { padding: '20px 28px', fontWeight: '600' } }, 'Loading…')));
-void Promise.all([warmCharacters(), loadPack()]).finally(() => showSetup());
+void Promise.all([warmCharacters(), loadPack().then(() => loadArt())]).finally(() => showSetup());

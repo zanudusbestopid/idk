@@ -17,6 +17,7 @@ import { getCharacter, type Character } from '../sprites.js';
 import type { FrameName } from '../art/sprites.js';
 import { dur } from '../settings.js';
 import { drawSprite, packReady, sprite as packSprite, spriteCanvas, stackCanvas, stripSprite, tileSprite, type StripParts } from '../art/pack.js';
+import { art, type PropDef } from '../art/overrides.js';
 import { THEME, T, deckName } from '../theme.js';
 import { money } from '../dom.js';
 
@@ -143,6 +144,28 @@ const WORLD_DECOR: Record<number, { name: string; h: number }> = {
   21: { name: 'bushes3', h: 30 }, 23: { name: 'pyramid2', h: 48 }, 24: { name: 'cave_water_block', h: 44 }, 26: { name: 'snow_cloud', h: 40 }, 27: { name: 'sky_platform', h: 22 }, 29: { name: 'gold_block', h: 34 },
   31: { name: 'giant_q', h: 48 }, 32: { name: 'giant_cloud', h: 46 }, 34: { name: 'giant_pipe', h: 52 }, 37: { name: 'dungeon_lantern', h: 48 }, 39: { name: 'throne', h: 64 },
 };
+/** The strip for a space: the art editor's choice, else the theme default ('' means none). */
+function spaceStripFor(i: number): string | StripParts | undefined {
+  const o = art.spaces[i]?.strip;
+  if (o !== undefined) return o || undefined;
+  return WORLD_STRIP[i];
+}
+function spaceDecorFor(i: number): { name: string; h: number } | undefined {
+  const o = art.spaces[i];
+  if (o?.decor !== undefined) return o.decor ? { name: o.decor, h: o.decorH ?? 48 } : undefined;
+  const d = WORLD_DECOR[i];
+  return d ? { name: d.name, h: o?.decorH ?? d.h } : undefined;
+}
+/** A canvas for a scenery prop: a sprite name, or 'bush:N' / 'pipe:N' for assembled strips and stacks. */
+function propCanvas(name: string): HTMLCanvasElement | null {
+  const m = /^(bush|pipe):(\d+)$/.exec(name);
+  if (m) {
+    const n = Math.max(1, Math.min(8, Number(m[2])));
+    if (m[1] === 'bush') { const c = document.createElement('canvas'); c.width = 16 * n; c.height = 16; stripSprite(c.getContext('2d')!, BUSH, 0, 0, 16 * n, 16, 1); return c; }
+    return stackCanvas(['pipe_top', ...Array.from({ length: n - 1 }, () => 'pipe_body')], 1);
+  }
+  return spriteCanvas(name, 1);
+}
 
 /** Open ground for the pixel theme: a two-tone green checker. */
 function grassTexture(): THREE.CanvasTexture {
@@ -333,6 +356,7 @@ function turnCutout(obj: { yaw: number; flip: { from: number; to: number; start:
 /** A scenery cutout: a pixel sprite extruded one pixel thick with an inked edge, standing on the table. */
 class PropObj {
   group = new THREE.Group();
+  id = '';
   yaw = 0;
   flip: { from: number; to: number; start: number; ms: number } | null = null;
   private baseY: number;
@@ -350,7 +374,7 @@ class PropObj {
     this.floating = false;
   }
   /** Clouds drift up and down a little; grounded props stay put. */
-  setFloating(base: number): void { this.floating = true; this.baseY = base; }
+  setFloating(base: number, on = true): void { this.floating = on; this.baseY = base; }
   turnToward(target: number, now: number, dt: number): void { turnCutout(this, target, now, dt); }
   bob(now: number): void { if (this.floating) this.group.position.y = this.baseY + Math.sin(now / 1400 + this.phase) * 0.12; }
 }
@@ -388,6 +412,7 @@ export class Board3D implements BoardView {
   private tokenPos = new Map<string, number>();
   private dynamic = new THREE.Group(); // owner marks, houses, mortgages
   private props: PropObj[] = []; // themed scenery cutouts that turn to face the camera like the standees
+  private propMarker!: THREE.Mesh;
   private hover: THREE.Mesh;
   private select: THREE.Mesh;
   private flashMesh: THREE.Mesh;
@@ -509,7 +534,7 @@ export class Board3D implements BoardView {
     this.scene.add(edge, body, top);
 
     // Decks
-    this.scene.add(this.deck('chance', -2.7 * K, 0.2, -0.12), this.deck('chest', 2.7 * K, 0.2, 0.09));
+    this.rebuildDecks();
 
     // Highlights
     const mk = (color: number, opacity: number) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false })); m.rotation.x = -Math.PI / 2; m.position.y = BOARD_Y + 0.004; m.visible = false; this.scene.add(m); return m; };
@@ -518,7 +543,9 @@ export class Board3D implements BoardView {
     this.flashMesh = mk(0xfff3a6, 0.7);
     this.ring = new THREE.Mesh(new THREE.RingGeometry(0.38, 0.5, 40), new THREE.MeshBasicMaterial({ color: 0xd9413a, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
     this.ring.rotation.x = -Math.PI / 2; this.ring.position.y = BOARD_Y + 0.006; this.ring.visible = false;
-    this.scene.add(this.ring, this.dynamic);
+    this.propMarker = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.8, 40), new THREE.MeshBasicMaterial({ color: 0xfbd000, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }));
+    this.propMarker.rotation.x = -Math.PI / 2; this.propMarker.visible = false;
+    this.scene.add(this.ring, this.dynamic, this.propMarker);
 
     // Dice
     for (let i = 0; i < 2; i++) {
@@ -549,43 +576,85 @@ export class Board3D implements BoardView {
   }
 
   /** Hills and clouds around a themed board, as upright cutouts that keep facing the camera. */
+  /** The build's own scenery layout (what the art editor starts from). */
+  defaultProps(): PropDef[] {
+    const far = HALF + 1.6;
+    const P = (id: string, sprite: string, x: number, y: number, z: number, h: number, float = false): PropDef => ({ id, sprite, x, y, z, h, float });
+    return [
+      P('hill-w', 'hill', -far - 2.4, 0, -3, 2.4), P('hill-e', 'hill', far + 2.6, 0, 4.5, 2.7), P('hill-n', 'hill', 3, 0, -far - 2.6, 2.3), P('hill-s', 'hill', -6, 0, far + 2.8, 2.1),
+      P('mound-e', 'hill_small', far + 1, 0, -6.5, 0.9), P('mound-w', 'hill_small', -far - 1, 0, 6.5, 0.9),
+      P('castle', 'castle_big', far + 4.5, 0, -far - 2.5, 4.2), P('castle-sm', 'castle_small', -far - 3.5, 0, far + 1.5, 2.6),
+      P('bush-1', 'bush:3', -far - 0.3, 0, 2, 0.75), P('bush-2', 'bush:2', far + 0.4, 0, -2.5, 0.7), P('bush-3', 'bush:4', -3, 0, far + 0.6, 0.85), P('bush-4', 'bush:2', 7.5, 0, far + 0.9, 0.7), P('bush-5', 'bush:3', 6, 0, -far - 0.5, 0.75), P('bush-6', 'bush:2', -far - 0.5, 0, -far, 0.7),
+      P('pipe-1', 'pipe:3', far + 0.6, 0, 7.5, 1.6), P('pipe-2', 'pipe:2', -far - 0.8, 0, -7, 1.1),
+      P('hill3-w', 'hill3_green', -far - 5, 0, 1, 2.6), P('hill3-stripe', 'hill3_stripe', far + 5.5, 0, -3, 3.4), P('hill3-n', 'hill3_orange', 8, 0, -far - 5, 2.4),
+      P('bumps-1', 'bumps3_green', -far - 2, 0, -9, 0.9), P('bushes-1', 'bushes3', far + 2.2, 0, 9.5, 0.9), P('bumps-2', 'bumps3_tan', -9, 0, far + 3, 0.9),
+      P('pyramid', 'pyramid_big', far + 8, 0, 9, 3), P('pyramid-2', 'pyramid3', far + 11, 0, 6.5, 2.2), P('palm', 'palm', far + 6, 0, 11, 2.2),
+      P('giant-pipe', 'giant_pipe', -far - 7, 0, -12, 2.8), P('giant-q', 'giant_q', -far - 3.5, 2.2, -14, 1.2, true), P('cactus', 'cactus', far + 9.5, 0, 11.5, 0.6),
+      P('cloud-1', 'cloud3_face', -far - 3, 4.2, far - 3, 2, true), P('cloud-2', 'cloud_mid', far + 3, 5, -1, 1.8, true), P('cloud-3', 'cloud3_big', 1, 5.6, -far - 4, 1.6, true), P('cloud-4', 'cloud_big', far * 0.6, 4.6, far + 3.5, 2.1, true), P('cloud-5', 'cloud3_face', -far * 0.7, 5.4, -far - 3, 1.7, true), P('cloud-6', 'giant_cloud', far + 6, 6.5, 2, 2.2, true),
+      P('ring-1', 'hill', 0, 0, 26, 5.5), P('ring-2', 'hill', 21.2, 0, 21.2, 4.5), P('ring-3', 'hill', 26.9, 0, -2.4, 6), P('ring-4', 'hill', 19.9, 0, -23.7, 5), P('ring-5', 'hill', -2.3, 0, -25.9, 5.5), P('ring-6', 'hill', -21.2, 0, -21.2, 4.8), P('ring-7', 'hill', -27.9, 0, 2.4, 6), P('ring-8', 'hill', -19.9, 0, 23.7, 5),
+      P('ring-bush-1', 'bush:3', 8.2, 0, 22.6, 1.2), P('ring-bush-2', 'bush:3', 7.9, 0, -21.6, 1.2), P('ring-bush-3', 'bush:3', -23.5, 0, -8.6, 1.2), P('ring-bush-4', 'bush:3', -19.1, 0, 11, 1.2),
+    ];
+  }
+
   /** Scenery around the board in the pixel theme: paper cutouts standing on the table, like the standees. */
-  private addScenery(): void {
-    const mk = (canvas: HTMLCanvasElement | null, x: number, y: number, z: number, height: number) => {
-      if (!canvas) return;
-      const prop = new PropObj(canvas, height);
-      prop.group.position.set(x, y, z);
+  private addScenery(): void { this.rebuildScenery(); }
+
+  rebuildScenery(): void {
+    for (const p of this.props) this.scene.remove(p.group);
+    this.props = [];
+    if (!themed()) return;
+    for (const def of art.props ?? this.defaultProps()) {
+      const canvas = propCanvas(def.sprite);
+      if (!canvas) continue;
+      const prop = new PropObj(canvas, def.h);
+      prop.id = def.id;
+      prop.group.position.set(def.x, def.y, def.z);
+      if (def.float) prop.setFloating(def.y);
       this.scene.add(prop.group);
       this.props.push(prop);
-    };
-    const strip = (parts: { left: string; mid: string; right: string }, n: number) => {
-      const c = document.createElement('canvas'); c.width = 16 * n; c.height = 16;
-      stripSprite(c.getContext('2d')!, parts, 0, 0, 16 * n, 16, 1);
-      return c;
-    };
-    const far = HALF + 1.6;
-    mk(spriteCanvas('hill', 1), -far - 2.4, 0, -3, 2.4); mk(spriteCanvas('hill', 1), far + 2.6, 0, 4.5, 2.7); mk(spriteCanvas('hill', 1), 3, 0, -far - 2.6, 2.3); mk(spriteCanvas('hill', 1), -6, 0, far + 2.8, 2.1);
-    mk(spriteCanvas('hill_small', 1), far + 1, 0, -6.5, 0.9); mk(spriteCanvas('hill_small', 1), -far - 1, 0, 6.5, 0.9);
-    mk(spriteCanvas('castle_big', 1), far + 4.5, 0, -far - 2.5, 4.2); mk(spriteCanvas('castle_small', 1), -far - 3.5, 0, far + 1.5, 2.6);
-    mk(strip(BUSH, 3), -far - 0.3, 0, 2, 0.75); mk(strip(BUSH, 2), far + 0.4, 0, -2.5, 0.7); mk(strip(BUSH, 4), -3, 0, far + 0.6, 0.85); mk(strip(BUSH, 2), 7.5, 0, far + 0.9, 0.7); mk(strip(BUSH, 3), 6, 0, -far - 0.5, 0.75); mk(strip(BUSH, 2), -far - 0.5, 0, -far, 0.7);
-    mk(stackCanvas(['pipe_top', 'pipe_body', 'pipe_body'], 1), far + 0.6, 0, 7.5, 1.6); mk(stackCanvas(['pipe_top', 'pipe_body'], 1), -far - 0.8, 0, -7, 1.1);
-    mk(spriteCanvas('hill3_green', 1), -far - 5, 0, 1, 2.6); mk(spriteCanvas('hill3_stripe', 1), far + 5.5, 0, -3, 3.4); mk(spriteCanvas('hill3_orange', 1), 8, 0, -far - 5, 2.4);
-    mk(spriteCanvas('bumps3_green', 1), -far - 2, 0, -9, 0.9); mk(spriteCanvas('bushes3', 1), far + 2.2, 0, 9.5, 0.9); mk(spriteCanvas('bumps3_tan', 1), -9, 0, far + 3, 0.9);
-    mk(spriteCanvas('pyramid_big', 1), far + 8, 0, 9, 3); mk(spriteCanvas('pyramid3', 1), far + 11, 0, 6.5, 2.2); mk(spriteCanvas('palm', 1), far + 6, 0, 11, 2.2);
-    mk(spriteCanvas('giant_pipe', 1), -far - 7, 0, -12, 2.8); mk(spriteCanvas('giant_q', 1), -far - 3.5, 2.2, -14, 1.2); mk(spriteCanvas('cactus', 1), far + 9.5, 0, 11.5, 0.6);
-    const before = this.props.length;
-    mk(spriteCanvas('cloud3_face', 1), -far - 3, 4.2, far - 3, 2); mk(spriteCanvas('cloud_mid', 1), far + 3, 5, -1, 1.8); mk(spriteCanvas('cloud3_big', 1), 1, 5.6, -far - 4, 1.6); mk(spriteCanvas('cloud_big', 1), far * 0.6, 4.6, far + 3.5, 2.1); mk(spriteCanvas('cloud3_face', 1), -far * 0.7, 5.4, -far - 3, 1.7); mk(spriteCanvas('giant_cloud', 1), far + 6, 6.5, 2, 2.2);
-    for (const p of this.props.slice(before)) p.setFloating(p.group.position.y);
-    // a loose ring of bigger hills further out; the fog hazes them into the horizon
-    const ring = [[0, 26, 5.5], [45, 30, 4.5], [95, 27, 6], [140, 31, 5], [185, 26, 5.5], [225, 30, 4.8], [275, 28, 6], [320, 31, 5]];
-    for (const [deg, dist, height] of ring) {
-      const a = (deg * Math.PI) / 180;
-      mk(spriteCanvas('hill', 1), Math.sin(a) * dist, 0, Math.cos(a) * dist, height);
     }
-    for (const [deg, dist] of [[20, 24], [160, 23], [250, 25], [300, 22]]) {
-      const a = (deg * Math.PI) / 180;
-      mk(strip(BUSH, 3), Math.sin(a) * dist, 0, Math.cos(a) * dist, 1.2);
-    }
+  }
+
+  /** Art editor: the table point under a pointer event, or null. */
+  pickGround(e: PointerEvent): { x: number; z: number } | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hit = new THREE.Vector3();
+    if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit)) return null;
+    return { x: hit.x, z: hit.z };
+  }
+
+  /** Art editor: move one prop in place (no rebuild). False when the prop is not in the scene. */
+  moveProp(def: PropDef): boolean {
+    const p = this.props.find((q) => q.id === def.id);
+    if (!p) return false;
+    p.group.position.set(def.x, def.y, def.z);
+    p.setFloating(def.y, !!def.float);
+    this.markProp(def.id);
+    return true;
+  }
+
+  /** Art editor: mark one prop (or none) with a ring on the table. */
+  markProp(id: string | null): void {
+    const p = id ? this.props.find((q) => q.id === id) : undefined;
+    this.propMarker.visible = !!p;
+    if (p) this.propMarker.position.set(p.group.position.x, 0.02, p.group.position.z);
+  }
+
+  private deckGroups: THREE.Group[] = [];
+  private rebuildDecks(): void {
+    for (const g of this.deckGroups) this.scene.remove(g);
+    this.deckGroups = [this.deck('chance', -2.7 * K, 0.2, -0.12), this.deck('chest', 2.7 * K, 0.2, 0.09)];
+  }
+
+  /** Redraw everything that comes from the art pack after the art editor changed it. */
+  refreshArt(): void {
+    if (this.state) { this.drawBoard(this.state); this.updateStatic(this.state); }
+    this.rebuildDecks();
+    this.rebuildScenery();
+    void this.loadDiceFaces();
   }
 
   private deckColor(kind: 'chance' | 'chest'): string {
@@ -605,7 +674,9 @@ export class Board3D implements BoardView {
       ctx.fillStyle = PIXEL_INK; ctx.font = `36px ${pixelFont()}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const lines = label.split(' ');
       lines.forEach((l, i) => ctx.fillText(l, 256, 262 + i * 44 - (lines.length - 1) * 22));
-      if (kind === 'chance') drawSprite(ctx, 'qblock', 196, 36, 120, 120);
+      const slot = packSprite(kind === 'chance' ? 'deck_chance' : 'deck_chest');
+      if (slot) { const sh = 150, sw = sh * slot.w / slot.h; drawSprite(ctx, kind === 'chance' ? 'deck_chance' : 'deck_chest', 256 - sw / 2, 30, sw, sh); }
+      else if (kind === 'chance') drawSprite(ctx, 'qblock', 196, 36, 120, 120);
       else { drawSprite(ctx, 'mushroom_top', 166, 40, 180, 60); drawSprite(ctx, 'mushroom_stem', 226, 96, 60, 90); }
       const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.magFilter = THREE.NearestFilter;
       const mat = [new THREE.MeshLambertMaterial({ color: PIXEL_INK }), new THREE.MeshLambertMaterial({ color: PIXEL_INK }), new THREE.MeshLambertMaterial({ map: tex }), new THREE.MeshLambertMaterial({ color: PIXEL_INK }), new THREE.MeshLambertMaterial({ color: PIXEL_INK }), new THREE.MeshLambertMaterial({ color: PIXEL_INK })];
@@ -635,7 +706,7 @@ export class Board3D implements BoardView {
   private blockFace(n: number): THREE.CanvasTexture {
     const c = document.createElement('canvas'); c.width = 256; c.height = 256;
     const ctx = c.getContext('2d')!;
-    drawSprite(ctx, 'used_block', 0, 0, 256, 256);
+    drawSprite(ctx, packSprite('die_face') ? 'die_face' : 'used_block', 0, 0, 256, 256);
     const pips: Record<number, [number, number][]> = { 1: [[128, 128]], 2: [[80, 80], [176, 176]], 3: [[72, 72], [128, 128], [184, 184]], 4: [[80, 80], [176, 80], [80, 176], [176, 176]], 5: [[76, 76], [180, 76], [128, 128], [76, 180], [180, 180]], 6: [[80, 68], [176, 68], [80, 128], [176, 128], [80, 188], [176, 188]] };
     for (const [x, y] of pips[n] ?? []) {
       ctx.fillStyle = PIXEL_INK; ctx.fillRect(x - 22, y - 22, 44, 44);
@@ -763,8 +834,8 @@ export class Board3D implements BoardView {
       else if (edge === 'left') { ctx.translate(left + b, 0); ctx.rotate(Math.PI / 2); }
       else { ctx.translate(left + iw - b, 0); ctx.rotate(-Math.PI / 2); }
       if (lava) { ctx.fillStyle = '#c8321e'; ctx.fillRect(-len / 2, -gh, len, gh); }
-      const ws = WORLD_STRIP[i];
-      if (lava) tileSprite(ctx, 'lava_top', -len / 2, -gh, len, gh, gh / 16);
+      const ws = spaceStripFor(i);
+      if (lava && ws === undefined) tileSprite(ctx, 'lava_top', -len / 2, -gh, len, gh, gh / 16);
       else if (typeof ws === 'string') tileSprite(ctx, ws, -len / 2, -gh, len, gh, gh / 16);
       else stripSprite(ctx, ws ?? GROUND, -len / 2, -gh, len, gh, gh / 16);
       ctx.restore();
@@ -792,7 +863,14 @@ export class Board3D implements BoardView {
       ctx.rotate(i === 0 ? -Math.PI / 4 : i === 10 ? Math.PI / 4 : i === 20 ? 3 * Math.PI / 4 : -3 * Math.PI / 4);
       // The panel is a square seen along its diagonal: content must satisfy |x| + |y| < ~160 to stay inside.
       const maxW = 150;
-      if (space.type === 'go') {
+      const override = art.spaces[i]?.decor;
+      const osp = override ? packSprite(override) : null;
+      if (override !== undefined && osp) {
+        label(nameOf(), 22, -100, maxW);
+        const oh = art.spaces[i]?.decorH ?? 110;
+        const ow = oh * osp.w / osp.h;
+        drawSprite(ctx, override, -ow / 2, 0, ow, oh);
+      } else if (space.type === 'go') {
         const yy = label(nameOf(), 30, -88, maxW);
         ctx.font = `12px ${pixelFont()}`; ctx.fillText('COLLECT 200', 0, yy);
         draw('castle_small', -36, 14, 96 * 0.9, 80 * 0.9);
@@ -844,7 +922,7 @@ export class Board3D implements BoardView {
       ctx.textAlign = 'left'; ctx.fillText(text, x0 + 30, after + 6); ctx.textAlign = 'center';
     }
     if (space.type === 'tax') { ctx.font = `16px ${pixelFont()}`; ctx.fillText(`PAY ${space.amount}`, 0, after + 6); }
-    const deco = WORLD_DECOR[i];
+    const deco = spaceDecorFor(i);
     const sp = deco ? packSprite(deco.name) : null;
     if (deco && sp) {
       const dh = Math.min(deco.h, gy - (after + 30) - 4);
@@ -1178,7 +1256,7 @@ export class Board3D implements BoardView {
   private building(x: number, y: number, z: number, hotel: boolean, f: { along: [number, number]; inward: [number, number] }): THREE.Group {
     const g = new THREE.Group();
     if (themed()) {
-      const canvas = hotel ? spriteCanvas('castle_small', 1) : stackCanvas(['mushroom_top', 'mushroom_stem'], 1);
+      const canvas = hotel ? (spriteCanvas('hotel', 1) ?? spriteCanvas('castle_small', 1)) : (spriteCanvas('house', 1) ?? stackCanvas(['mushroom_top', 'mushroom_stem'], 1));
       if (canvas) {
         const { geometry, texture } = pixelCutout(canvas, 0.05);
         const face = new THREE.MeshBasicMaterial({ map: texture, transparent: true, alphaTest: 0.05, side: THREE.DoubleSide });
