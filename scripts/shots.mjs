@@ -63,11 +63,15 @@ await waitIdle(p1); await p1.waitForTimeout(600);
 await p1.screenshot({ path: 'shots/desktop-midgame.png' });
 await p2.screenshot({ path: 'shots/mobile-midgame.png' });
 await p2.screenshot({ path: 'shots/mobile-midgame-full.png', fullPage: true });
-// deed dialog
+// deed dialog: switch to the flat board (tests the toggle), click a street, switch back
+await p1.click('.logbox button:has-text("2D")');
+await p1.waitForSelector('.space[data-index="39"]');
 await p1.click('.space[data-index="39"]');
 await p1.waitForTimeout(300);
 await p1.screenshot({ path: 'shots/desktop-deed.png' });
 await p1.keyboard.press('Escape'); await p1.click('.dialog button:has-text("Close")').catch(() => {});
+await p1.click('.logbox button:has-text("3D")');
+await p1.waitForSelector('.game .board3d-wrap');
 // manage dialog
 if (await p1.locator('.actions button:has-text("Manage"), .actions button:has-text("Properties")').count()) {
   await p1.click('.actions button:has-text("Manage"), .actions button:has-text("Properties")');
