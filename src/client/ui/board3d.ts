@@ -130,6 +130,22 @@ const PIXEL_INK = '#161616';
 const GROUND = { left: 'ground_l', mid: 'ground_m', right: 'ground_r' };
 const BUSH = { left: 'bush_l', mid: 'bush_m', right: 'bush_r' };
 
+/** Open ground for the pixel theme: a two-tone green checker. */
+function grassTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 512;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#5cb84a'; ctx.fillRect(0, 0, 512, 512);
+  ctx.fillStyle = '#57ae45';
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) if ((x + y) % 2) ctx.fillRect(x * 64, y * 64, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.magFilter = THREE.NearestFilter;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(20, 20);
+  return t;
+}
+
 /** Pixel text with a dark outline and a hard drop shadow, All-Stars title style. */
 function pixelTitle(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, px: number, fill: string, shadow = Math.round(px * 0.09)): void {
   ctx.save();
@@ -420,8 +436,10 @@ export class Board3D implements BoardView {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.scene.background = new THREE.Color('#7d4d22');
-    this.scene.fog = new THREE.Fog('#7d4d22', 30 * K, 60 * K);
+    // The classic board sits on a wooden table; the pixel theme sits on open ground under a sky, with
+    // fog the colour of the sky so the ground and the far hills fade into the horizon (no walls).
+    this.scene.background = new THREE.Color(themed() ? SKY : '#7d4d22');
+    this.scene.fog = new THREE.Fog(themed() ? SKY : '#7d4d22', themed() ? 20 * K : 30 * K, themed() ? 62 * K : 60 * K);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
     this.camera.position.copy(this.camPos);
@@ -455,7 +473,7 @@ export class Board3D implements BoardView {
     this.scene.add(sun);
 
     // Table
-    const table = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshLambertMaterial({ map: woodTexture() }));
+    const table = new THREE.Mesh(new THREE.PlaneGeometry(themed() ? 160 : 80, themed() ? 160 : 80), new THREE.MeshLambertMaterial({ map: themed() ? grassTexture() : woodTexture() }));
     table.rotation.x = -Math.PI / 2;
     table.receiveShadow = true;
     this.scene.add(table);
@@ -540,6 +558,16 @@ export class Board3D implements BoardView {
     const before = this.props.length;
     mk(spriteCanvas('cloud_big', 1), -far - 3, 4.2, far - 3, 2); mk(spriteCanvas('cloud_mid', 1), far + 3, 5, -1, 1.8); mk(spriteCanvas('cloud_small', 1), 1, 5.6, -far - 4, 1.2); mk(spriteCanvas('cloud_big', 1), far * 0.6, 4.6, far + 3.5, 2.1); mk(spriteCanvas('cloud_mid', 1), -far * 0.7, 5.4, -far - 3, 1.6);
     for (const p of this.props.slice(before)) p.setFloating(p.group.position.y);
+    // a loose ring of bigger hills further out; the fog hazes them into the horizon
+    const ring = [[0, 26, 5.5], [45, 30, 4.5], [95, 27, 6], [140, 31, 5], [185, 26, 5.5], [225, 30, 4.8], [275, 28, 6], [320, 31, 5]];
+    for (const [deg, dist, height] of ring) {
+      const a = (deg * Math.PI) / 180;
+      mk(spriteCanvas('hill', 1), Math.sin(a) * dist, 0, Math.cos(a) * dist, height);
+    }
+    for (const [deg, dist] of [[20, 24], [160, 23], [250, 25], [300, 22]]) {
+      const a = (deg * Math.PI) / 180;
+      mk(strip(BUSH, 3), Math.sin(a) * dist, 0, Math.cos(a) * dist, 1.2);
+    }
   }
 
   private deckColor(kind: 'chance' | 'chest'): string {
