@@ -77,6 +77,43 @@ export function tileSprite(ctx: CanvasRenderingContext2D, name: string, x: numbe
   return true;
 }
 
+export interface StripParts { left: string; mid: string; right: string }
+
+/**
+ * A horizontal strip made of an edge tile at each end and the middle tile repeated between
+ * them (the way All-Stars ground, clouds and bushes are assembled). Built once as one image.
+ */
+export function stripSprite(ctx: CanvasRenderingContext2D, parts: StripParts, x: number, y: number, w: number, h: number, scale: number): boolean {
+  const l = sprite(parts.left), m = sprite(parts.mid), r = sprite(parts.right);
+  if (!l || !m || !r || !atlas || w <= 0 || h <= 0) return false;
+  const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h));
+  const key = `strip:${parts.left}|${parts.mid}|${parts.right}:${W}x${H}:${scale.toFixed(2)}`;
+  let strip = stripCache.get(key);
+  if (!strip) {
+    strip = document.createElement('canvas');
+    strip.width = W; strip.height = H;
+    const sc = strip.getContext('2d')!;
+    sc.imageSmoothingEnabled = false;
+    const edge = Math.min(Math.round(l.w * scale), Math.floor(W / 2));
+    const midW = W - 2 * edge;
+    sc.drawImage(atlas, l.x, l.y, l.w, l.h, 0, 0, edge, H);
+    if (midW > 0) {
+      const n = Math.max(1, Math.round(midW / (m.w * scale)));
+      for (let i = 0; i < n; i++) {
+        const x0 = edge + Math.round(i * midW / n), x1 = edge + Math.round((i + 1) * midW / n);
+        sc.drawImage(atlas, m.x, m.y, m.w, m.h, x0, 0, x1 - x0, H);
+      }
+    }
+    sc.drawImage(atlas, r.x, r.y, r.w, r.h, W - edge, 0, edge, H);
+    stripCache.set(key, strip);
+  }
+  const prev = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(strip, x, y, w, h);
+  ctx.imageSmoothingEnabled = prev;
+  return true;
+}
+
 /** A standalone canvas holding one sprite at an integer scale (cached), e.g. for cutouts and textures. */
 export function spriteCanvas(name: string, scale = 1): HTMLCanvasElement | null {
   const s = sprite(name);

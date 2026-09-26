@@ -16,7 +16,7 @@ import { pixelCutout } from './cutout.js';
 import { getCharacter, type Character } from '../sprites.js';
 import type { FrameName } from '../art/sprites.js';
 import { dur } from '../settings.js';
-import { drawSprite, packReady, spriteCanvas, stackCanvas, tileSprite } from '../art/pack.js';
+import { drawSprite, packReady, spriteCanvas, stackCanvas, stripSprite, tileSprite } from '../art/pack.js';
 import { THEME, T, deckName } from '../theme.js';
 import { money } from '../dom.js';
 
@@ -127,6 +127,9 @@ function pixelFont(): string { return '"Press Start 2P", "Courier New", monospac
 function themed(): boolean { return packReady(); }
 const SKY = '#6fa8ff';
 const PIXEL_INK = '#161616';
+const GROUND = { left: 'ground_l', mid: 'ground_m', right: 'ground_r' };
+const CLOUD = { left: 'cloud_l', mid: 'cloud_m', right: 'cloud_r' };
+const BUSH = { left: 'bush_l', mid: 'bush_m', right: 'bush_r' };
 
 /** Grass ground for the table under a themed board: flat green with bushes and small hills scattered. */
 function grassTexture(): THREE.CanvasTexture {
@@ -134,7 +137,7 @@ function grassTexture(): THREE.CanvasTexture {
   c.width = 1024; c.height = 1024;
   const ctx = c.getContext('2d')!;
   ctx.fillStyle = '#5cb84a'; ctx.fillRect(0, 0, 1024, 1024);
-  for (let i = 0; i < 12; i++) drawSprite(ctx, 'bush', Math.random() * 900, Math.random() * 980, 48 * 2.5, 16 * 2.5);
+  for (let i = 0; i < 12; i++) stripSprite(ctx, BUSH, Math.random() * 900, Math.random() * 980, 16 * 2.5 * (2 + Math.floor(Math.random() * 3)), 16 * 2.5, 2.5);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.magFilter = THREE.NearestFilter;
@@ -638,17 +641,17 @@ export class Board3D implements BoardView {
     const inner = CORNER * S;
     const x0 = inner + 8, x1 = TEX - inner - 8, y1 = TEX - inner - 8;
     // ground along the bottom of the middle, hills and bushes on it, clouds above
-    tileSprite(ctx, 'ground_top', x0, y1 - 48, x1 - x0, 48, 3);
+    stripSprite(ctx, GROUND, x0, y1 - 48, x1 - x0, 48, 3);
     drawSprite(ctx, 'hill', x0 + 20, y1 - 48 - 190, 64 * 6, 32 * 6);
     drawSprite(ctx, 'hill', x1 - 20 - 64 * 4, y1 - 48 - 128, 64 * 4, 32 * 4);
     drawSprite(ctx, 'hill_small', x0 + 560, y1 - 48 - 96, 32 * 3, 32 * 3);
-    drawSprite(ctx, 'bush', x0 + 430, y1 - 48 - 48, 48 * 3, 16 * 3);
-    drawSprite(ctx, 'bush', x1 - 420, y1 - 48 - 48, 48 * 3, 16 * 3);
+    stripSprite(ctx, BUSH, x0 + 430, y1 - 48 - 48, 16 * 3 * 5, 16 * 3, 3);
+    stripSprite(ctx, BUSH, x1 - 420, y1 - 48 - 48, 16 * 3 * 3, 16 * 3, 3);
     drawSprite(ctx, 'castle_small', x1 - 300, y1 - 48 - 80 * 3, 96 * 3, 80 * 3);
-    drawSprite(ctx, 'cloud_small', x0 + 90, inner + 70, 48 * 4, 16 * 4);
+    stripSprite(ctx, CLOUD, x0 + 90, inner + 70, 16 * 4 * 5, 16 * 4, 4);
     drawSprite(ctx, 'cloud_big', x1 - 380, inner + 40, 48 * 5, 32 * 5);
     drawSprite(ctx, 'cloud_mid', x0 + 560, inner + 190, 32 * 4, 32 * 4);
-    drawSprite(ctx, 'cloud_small', x1 - 700, inner + 120, 48 * 4, 16 * 4);
+    stripSprite(ctx, CLOUD, x1 - 700, inner + 120, 16 * 4 * 3, 16 * 4, 4);
     for (let i = 0; i < 5; i++) drawSprite(ctx, i % 2 ? 'coin' : 'coin2', x0 + 520 + i * 60, y1 - 48 - 330, 40, 40);
     // logo
     const [t1, t2] = THEME.title;
@@ -685,7 +688,8 @@ export class Board3D implements BoardView {
       else if (edge === 'left') { ctx.translate(left + b, 0); ctx.rotate(Math.PI / 2); }
       else { ctx.translate(left + iw - b, 0); ctx.rotate(-Math.PI / 2); }
       if (lava) { ctx.fillStyle = '#c8321e'; ctx.fillRect(-len / 2, -gh, len, gh); }
-      tileSprite(ctx, lava ? 'lava_top' : 'ground_top', -len / 2, -gh, len, gh, gh / 16);
+      if (lava) tileSprite(ctx, 'lava_top', -len / 2, -gh, len, gh, gh / 16);
+      else stripSprite(ctx, GROUND, -len / 2, -gh, len, gh, gh / 16);
       ctx.restore();
     };
     const draw = (name: string, x: number, yy: number, sw: number, sh: number) => drawSprite(ctx, name, x, yy, sw, sh);
