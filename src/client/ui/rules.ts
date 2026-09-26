@@ -1,6 +1,7 @@
 import type { GameConfig } from '../../shared/types.js';
 import { ICONS } from '../art/icons.js';
 import { h } from '../dom.js';
+import { T } from '../theme.js';
 
 /** The house-rules panel shared by the online lobby and the single-player setup. */
 export function rulesPanel(c: GameConfig, editable: boolean, onChange: (patch: Partial<GameConfig>) => void): HTMLElement {
@@ -16,12 +17,12 @@ export function rulesPanel(c: GameConfig, editable: boolean, onChange: (patch: P
     root.appendChild(h('div', { class: 'rule' }, h('div', null, h('div', { class: 'rlabel' }, label), h('div', { class: 'rhint' }, hint)), sw));
   };
   num('startingCash', 'Starting cash', 'Everyone begins with this much.', 100, 10000, 50);
-  num('goSalary', 'Salary for passing Go', 'Collected each lap.', 0, 2000, 10);
+  num('goSalary', `Salary for passing ${T.go}`, 'Collected each lap.', 0, 2000, 10);
   bool('auctions', 'Auctions', 'A property nobody buys goes to auction (official rule).');
-  bool('freeParkingJackpot', 'Free Parking jackpot', 'Taxes and fees pile up; land there to collect.');
-  bool('doubleGoSalary', 'Double salary on Go', 'Landing exactly on Go pays twice.');
-  num('jailFine', 'Jail fine', 'Cost to leave jail early.', 0, 1000, 10);
-  num('maxJailTurns', 'Max turns in jail', 'Then you must pay and move.', 1, 6);
+  bool('freeParkingJackpot', `${T.freeParking} jackpot`, 'Taxes and fees pile up; land there to collect.');
+  bool('doubleGoSalary', `Double salary on ${T.go}`, `Landing exactly on ${T.go} pays twice.`);
+  num('jailFine', `${T.jail} fine`, `Cost to leave ${T.jail} early.`, 0, 1000, 10);
+  num('maxJailTurns', `Max turns in ${T.jail}`, 'Then you must pay and move.', 1, 6);
   return root;
 }
 

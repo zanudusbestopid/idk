@@ -7,6 +7,7 @@ import { h, clear, toast } from './dom.js';
 import { Net } from './net.js';
 import { warmCharacters } from './sprites.js';
 import { Store, loadSession, saveSession } from './store.js';
+import { THEME } from './theme.js';
 import { TitleScene, homePlayers, roomPlayers } from './title.js';
 import { GameScreen } from './ui/game.js';
 import { renderHome } from './ui/home.js';
@@ -14,6 +15,8 @@ import { LobbyScreen } from './ui/lobby.js';
 
 const app = document.getElementById('app')!;
 document.body.insertAdjacentHTML('afterbegin', PAPER_DEFS);
+document.title = THEME.name;
+document.body.dataset.theme = THEME.id;
 document.addEventListener('pointerdown', unlockAudio, { once: true });
 
 const store = new Store();

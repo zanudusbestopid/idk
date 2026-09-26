@@ -2,6 +2,7 @@
 // client embedded, so the deliverable is one JavaScript file: dist/paper-tycoon.js
 import { build } from 'esbuild';
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 const watch = process.argv.includes('--watch');
 await mkdir('dist/public', { recursive: true });
@@ -9,7 +10,7 @@ await mkdir('dist/public', { recursive: true });
 // Build-time constants read by src/client/sprites.ts. The public build ships no
 // default sheet; `PT_SHEET=<png> PT_NAMES=a:#hex,b,...` (eight) additionally produces a
 // private build under dist/private with that sheet and those token names baked in.
-const PUBLIC_DEFINE = { __DEFAULT_SHEET__: 'null', __TOKEN_NAMES__: 'null' };
+const PUBLIC_DEFINE = { __DEFAULT_SHEET__: 'null', __TOKEN_NAMES__: 'null', __THEME__: 'null', __THEME_PACK__: 'null' };
 
 // 1. Client bundle (JS + CSS) → dist/public
 const client = await build({
@@ -62,7 +63,9 @@ console.log('Built dist/paper-tycoon.js');
 const fonts = '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Patrick+Hand&display=swap" rel="stylesheet">';
 const favicon = `<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='6' y='6' width='52' height='52' rx='8' fill='%23fbf3e0' stroke='%232b2118' stroke-width='5'/%3E%3Crect x='6' y='6' width='52' height='14' rx='6' fill='%23d9413a' stroke='%232b2118' stroke-width='5'/%3E%3Ccircle cx='24' cy='40' r='4' fill='%232b2118'/%3E%3Ccircle cx='40' cy='40' r='4' fill='%232b2118'/%3E%3C/svg%3E">`;
 
-async function buildSolo(dir, define) {
+async function buildSolo(dir, define, opts = {}) {
+  const title = opts.title ?? 'Paper Tycoon';
+  const fontLinks = fonts + (opts.pixelFont ? '<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">' : '');
   await mkdir(dir, { recursive: true });
   const solo = await build({
     entryPoints: ['src/client/single.ts'],
@@ -81,9 +84,9 @@ async function buildSolo(dir, define) {
   let soloCss = '';
   try { soloCss = await readFile(`${dir}/client.css`, 'utf8'); } catch { soloCss = ''; }
   const body = `<div id="app" class="app"></div>\n<script>${soloJs}</script>`;
-  const standalone = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>Paper Tycoon</title>\n<meta name="description" content="A paper-craft property trading board game against computer players.">\n${fonts}\n${favicon}\n<style>${soloCss}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
+  const standalone = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<title>${title}</title>\n<meta name="description" content="A paper-craft property trading board game against computer players.">\n${fontLinks}\n${favicon}\n<style>${soloCss}</style>\n</head>\n<body>\n${body}\n</body>\n</html>\n`;
   await writeFile(`${dir}/paper-tycoon-solo.html`, standalone);
-  const artifact = `<title>Paper Tycoon</title>\n${fonts}\n<style>html,body{height:100%}${soloCss}</style>\n${body}\n`;
+  const artifact = `<title>${title}</title>\n${fontLinks}\n<style>html,body{height:100%}${soloCss}</style>\n${body}\n`;
   await writeFile(`${dir}/artifact.html`, artifact);
 }
 
@@ -98,9 +101,19 @@ if (process.env.PT_SHEET) {
   // PT_NAMES: eight comma-separated entries, each "Name" or "Name:#color".
   const names = (process.env.PT_NAMES ?? '').split(',').map((n) => n.trim()).filter(Boolean)
     .map((n) => { const m = /^(.*?)(?::(#[0-9a-fA-F]{3,8}))?$/.exec(n); return { name: m?.[1] ?? n, color: m?.[2] }; });
+  // PT_THEME selects the text theme (src/shared/theme.ts); PT_PACK points at an atlas manifest
+  // ({ image, sprites }) whose image is embedded as a data URL; PT_TITLE sets the page title.
+  let pack = null;
+  if (process.env.PT_PACK) {
+    const manifest = JSON.parse(await readFile(process.env.PT_PACK, 'utf8'));
+    const img = await readFile(join(dirname(process.env.PT_PACK), manifest.image));
+    pack = { image: `data:image/png;base64,${img.toString('base64')}`, sprites: manifest.sprites };
+  }
   await buildSolo('dist/private', {
     __DEFAULT_SHEET__: JSON.stringify(sheet),
     __TOKEN_NAMES__: JSON.stringify(names.length === 8 ? names : null),
-  });
+    __THEME__: JSON.stringify(process.env.PT_THEME ?? null),
+    __THEME_PACK__: JSON.stringify(pack),
+  }, { title: process.env.PT_TITLE, pixelFont: !!process.env.PT_THEME });
   console.log('Built private dist/private/paper-tycoon-solo.html and dist/private/artifact.html');
 }

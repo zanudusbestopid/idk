@@ -19,6 +19,7 @@ import type {
   GameState,
   Player,
   PropertyState,
+  Space,
   Trade,
   TradeSide,
 } from '../shared/types';
@@ -80,7 +81,7 @@ export interface NewPlayer {
 // ---------------------------------------------------------------------------
 // Game creation
 
-export function createGame(config: Partial<GameConfig>, players: NewPlayer[], seed: number): GameState {
+export function createGame(config: Partial<GameConfig>, players: NewPlayer[], seed: number, board: Space[] = BOARD): GameState {
   if (!Array.isArray(players) || players.length < 2) throw new Error('At least two players are required');
   const ids = new Set(players.map((p) => p.id));
   if (ids.size !== players.length) throw new Error('Player ids must be unique');
@@ -100,13 +101,13 @@ export function createGame(config: Partial<GameConfig>, players: NewPlayer[], se
   rng = chest.state;
 
   const properties: Record<number, PropertyState> = {};
-  for (const space of BOARD) {
+  for (const space of board) {
     if (isOwnable(space)) properties[space.index] = { owner: null, houses: 0, mortgaged: false };
   }
 
   const state: GameState = {
     config: cfg,
-    board: deepFreeze(BOARD.map((s) => ({ ...s, ...(s.rent ? { rent: s.rent.slice() } : {}) }))),
+    board: deepFreeze(board.map((s) => ({ ...s, ...(s.rent ? { rent: s.rent.slice() } : {}) }))),
     players: players.map((p) => ({
       id: p.id,
       name: p.name,

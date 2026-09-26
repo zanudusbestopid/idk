@@ -6,6 +6,7 @@ import { defaultBots, type SavedGame, type SoloSetup } from '../local.js';
 import { loadProfile, saveProfile } from '../store.js';
 import { tokenSvg } from './home.js';
 import { rulesPanel } from './rules.js';
+import { T, THEME } from '../theme.js';
 import { SHEET_HELP, getCustomSheetUrl, setCustomSheetUrl, warmCharacters } from '../sprites.js';
 
 export interface SetupHandlers {
@@ -94,7 +95,7 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
     rulesHost.appendChild(rulesPanel({ ...DEFAULT_CONFIG, ...setup.config } as GameConfig, true, (patch) => { Object.assign(setup.config, patch); renderRules(); }));
   }
   renderRules();
-  const rules = h('details', { class: 'rules-fold' }, h('summary', null, 'House rules ', h('span', { class: 'muted small' }, '(auctions, Free Parking, starting cash…)')), rulesHost);
+  const rules = h('details', { class: 'rules-fold' }, h('summary', null, 'House rules ', h('span', { class: 'muted small' }, `(auctions, ${T.freeParking}, starting cash…)`)), rulesHost);
 
   const startBtn = h('button', { class: 'btn btn--primary btn--lg', type: 'button', id: 'setup-start', onClick: () => {
     setup.name = nameInput.value.trim() || 'You';
@@ -107,8 +108,8 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
     h('button', { class: 'btn btn--good', type: 'button', id: 'setup-resume', onClick: () => handlers.onResume(saved) }, 'Resume')) : null;
 
   const hero = h('div', { class: 'title-hero' },
-    h('h1', { class: 'title-art' }, h('span', null, 'PAPER'), h('span', null, 'TYCOON')),
-    h('p', { class: 'tagline hand' }, 'Buy streets, build houses, bankrupt the computer. All out of paper.'),
+    h('h1', { class: 'title-art' }, h('span', null, THEME.title[0]), h('span', null, THEME.title[1])),
+    h('p', { class: 'tagline hand' }, THEME.tagline),
     resume);
   const fields = [
     h('div', { class: 'field', style: { '--i': '0' } as unknown as Record<string, string> }, h('label', { for: 'setup-name' }, 'Your name'), nameInput),

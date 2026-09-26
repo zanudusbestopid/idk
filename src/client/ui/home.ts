@@ -2,6 +2,7 @@ import { TOKEN_LIST } from '../../shared/tokens.js';
 import { characterSvg } from '../sprites.js';
 import { h, clear } from '../dom.js';
 import { loadProfile, saveProfile } from '../store.js';
+import { THEME } from '../theme.js';
 
 export interface HomeHandlers {
   onCreate(name: string, token: string): void;
@@ -57,8 +58,8 @@ export function renderHome(root: HTMLElement, handlers: HomeHandlers, prefillCod
   codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
 
   const hero = h('div', { class: 'title-hero' },
-    h('h1', { class: 'title-art' }, h('span', null, 'PAPER'), h('span', null, 'TYCOON')),
-    h('p', { class: 'tagline hand' }, 'Buy streets, build houses, bankrupt your friends. All out of paper.'));
+    h('h1', { class: 'title-art' }, h('span', null, THEME.title[0]), h('span', null, THEME.title[1])),
+    h('p', { class: 'tagline hand' }, THEME.taglineOnline));
   const card = h('div', { class: 'setup-card paper home' },
     h('div', { class: 'field', style: idx(0) }, h('label', { for: 'home-name' }, 'Your name'), nameInput),
     h('div', { class: 'field', style: idx(1) }, h('label', null, 'Pick a token'), grid),

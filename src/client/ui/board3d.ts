@@ -16,6 +16,9 @@ import { pixelCutout } from './cutout.js';
 import { getCharacter, type Character } from '../sprites.js';
 import type { FrameName } from '../art/sprites.js';
 import { dur } from '../settings.js';
+import { drawSprite, packReady, spriteCanvas, stackCanvas, tileSprite } from '../art/pack.js';
+import { THEME, T, deckName } from '../theme.js';
+import { money } from '../dom.js';
 
 const UNIT = 1.45;   // width of a regular space (was 1): room for several standees side by side
 const CORNER = 2.1;
@@ -119,6 +122,40 @@ function woodTexture(): THREE.CanvasTexture {
 }
 
 function fontStack(): string { return 'Fredoka, "Trebuchet MS", "Segoe UI", sans-serif'; }
+function pixelFont(): string { return '"Press Start 2P", "Courier New", monospace'; }
+/** True when the build ships a pixel-art theme pack and it has loaded: the board renders in that style. */
+function themed(): boolean { return packReady(); }
+const SKY = '#6fa8ff';
+const PIXEL_INK = '#161616';
+
+/** Grass ground for the table under a themed board: flat green with bushes and small hills scattered. */
+function grassTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 1024;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#5cb84a'; ctx.fillRect(0, 0, 1024, 1024);
+  for (let i = 0; i < 260; i++) { ctx.fillStyle = i % 2 ? '#63c24f' : '#55ad44'; ctx.fillRect(Math.floor(Math.random() * 128) * 8, Math.floor(Math.random() * 128) * 8, 8, 8); }
+  for (let i = 0; i < 14; i++) drawSprite(ctx, 'bush', Math.random() * 900, Math.random() * 980, 48 * 2.5, 16 * 2.5);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.magFilter = THREE.NearestFilter;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(5, 5);
+  return t;
+}
+
+/** Pixel text with a dark outline and a hard drop shadow, All-Stars title style. */
+function pixelTitle(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, px: number, fill: string, shadow = Math.round(px * 0.09)): void {
+  ctx.save();
+  ctx.font = `${px}px ${pixelFont()}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'miter'; ctx.miterLimit = 2;
+  ctx.lineWidth = Math.max(4, px * 0.16); ctx.strokeStyle = PIXEL_INK;
+  ctx.fillStyle = PIXEL_INK; ctx.fillText(text, x + shadow, y + shadow); ctx.strokeText(text, x + shadow, y + shadow);
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = fill; ctx.fillText(text, x, y);
+  ctx.restore();
+}
 
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
   const words = text.split(' ');
@@ -306,6 +343,7 @@ export class Board3D implements BoardView {
   private busyTokens = new Set<TokenObj>();
   private tokenPos = new Map<string, number>();
   private dynamic = new THREE.Group(); // owner marks, houses, mortgages
+  private billboards: THREE.Object3D[] = []; // themed scenery that turns to face the camera
   private hover: THREE.Mesh;
   private select: THREE.Mesh;
   private flashMesh: THREE.Mesh;
@@ -368,8 +406,8 @@ export class Board3D implements BoardView {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.scene.background = new THREE.Color('#7d4d22');
-    this.scene.fog = new THREE.Fog('#7d4d22', 30 * K, 60 * K);
+    this.scene.background = new THREE.Color(themed() ? SKY : '#7d4d22');
+    this.scene.fog = new THREE.Fog(themed() ? SKY : '#7d4d22', 30 * K, 60 * K);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
     this.camera.position.copy(this.camPos);
@@ -403,10 +441,11 @@ export class Board3D implements BoardView {
     this.scene.add(sun);
 
     // Table
-    const table = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshLambertMaterial({ map: woodTexture() }));
+    const table = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.MeshLambertMaterial({ map: themed() ? grassTexture() : woodTexture() }));
     table.rotation.x = -Math.PI / 2;
     table.receiveShadow = true;
     this.scene.add(table);
+    if (themed()) this.addScenery();
 
     // Board: white sticker edge, ink body, paper top
     const edge = new THREE.Mesh(new THREE.BoxGeometry(2 * HALF + 0.5, 0.05, 2 * HALF + 0.5), new THREE.MeshLambertMaterial({ color: PAPER }));
@@ -424,7 +463,7 @@ export class Board3D implements BoardView {
     this.scene.add(edge, body, top);
 
     // Decks
-    this.scene.add(this.deck('CHANCE', '#ffe1b3', ICONS.chance, -2.7 * K, 0.2, -0.12), this.deck('COMMUNITY CHEST', '#dff1fa', ICONS.chest, 2.7 * K, 0.2, 0.09));
+    this.scene.add(this.deck('chance', -2.7 * K, 0.2, -0.12), this.deck('chest', 2.7 * K, 0.2, 0.09));
 
     // Highlights
     const mk = (color: number, opacity: number) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false })); m.rotation.x = -Math.PI / 2; m.position.y = BOARD_Y + 0.004; m.visible = false; this.scene.add(m); return m; };
@@ -463,17 +502,57 @@ export class Board3D implements BoardView {
     this.loop();
   }
 
-  private deck(label: string, color: string, icon: string, x: number, z: number, rot: number): THREE.Group {
+  /** Hills and clouds around a themed board, as upright cutouts that keep facing the camera. */
+  private addScenery(): void {
+    const mk = (name: string, x: number, y: number, z: number, height: number) => {
+      const canvas = spriteCanvas(name, 1);
+      if (!canvas) return;
+      const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace; tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(height * canvas.width / canvas.height, height), new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05, side: THREE.DoubleSide, fog: true }));
+      m.position.set(x, y + height / 2, z);
+      this.scene.add(m);
+      this.billboards.push(m);
+    };
+    const far = HALF + 3.2;
+    mk('hill', -far, 0, -2, 3.2); mk('hill', far + 1, 0, 3, 3.6); mk('hill', 1, 0, -far - 1, 3.4); mk('hill', -3, 0, far + 1.5, 3);
+    mk('hill_small', far - 1, 0, -5, 1.6); mk('hill_small', -far + 1, 0, 6, 1.6); mk('castle_big', far + 3, 0, -far, 4.2);
+    mk('cloud_big', -far, 4.5, far, 2); mk('cloud_face', far, 5.2, -far * 0.5, 2); mk('cloud_mid', 0, 6, -far - 2, 1.8); mk('cloud_small', -far * 0.5, 5.5, -far, 1.6); mk('cloud_big', far * 0.7, 4.8, far + 1, 2.2);
+  }
+
+  private deckColor(kind: 'chance' | 'chest'): string {
+    if (themed()) return kind === 'chance' ? '#f8d020' : '#f9f1dc';
+    return kind === 'chance' ? '#ffe1b3' : '#dff1fa';
+  }
+
+  private deck(kind: 'chance' | 'chest', x: number, z: number, rot: number): THREE.Group {
     const g = new THREE.Group();
+    const label = deckName(kind).toUpperCase();
+    const color = this.deckColor(kind);
     const c = document.createElement('canvas'); c.width = 512; c.height = 340;
     const ctx = c.getContext('2d')!;
     ctx.fillStyle = color; ctx.fillRect(0, 0, 512, 340);
+    if (themed()) {
+      ctx.lineWidth = 16; ctx.strokeStyle = PIXEL_INK; ctx.strokeRect(8, 8, 496, 324);
+      ctx.fillStyle = PIXEL_INK; ctx.font = `36px ${pixelFont()}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const lines = label.split(' ');
+      lines.forEach((l, i) => ctx.fillText(l, 256, 262 + i * 44 - (lines.length - 1) * 22));
+      if (kind === 'chance') drawSprite(ctx, 'qblock', 196, 36, 120, 120);
+      else { drawSprite(ctx, 'mushroom_top', 166, 40, 180, 60); drawSprite(ctx, 'mushroom_stem', 226, 96, 60, 90); }
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.magFilter = THREE.NearestFilter;
+      const mat = [new THREE.MeshLambertMaterial({ color: PIXEL_INK }), new THREE.MeshLambertMaterial({ color: PIXEL_INK }), new THREE.MeshLambertMaterial({ map: tex }), new THREE.MeshLambertMaterial({ color: PIXEL_INK }), new THREE.MeshLambertMaterial({ color: PIXEL_INK }), new THREE.MeshLambertMaterial({ color: PIXEL_INK })];
+      const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.09, 1.0), mat);
+      box.castShadow = true; box.position.y = BOARD_Y + 0.045;
+      g.add(box);
+      g.position.set(x, 0, z); g.rotation.y = rot;
+      this.scene.add(g);
+      return g;
+    }
     ctx.lineWidth = 14; ctx.strokeStyle = INK; roundRect(ctx, 7, 7, 498, 326, 30); ctx.stroke();
     ctx.fillStyle = INK; ctx.font = `700 54px ${fontStack()}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const lines = label.split(' ');
     lines.forEach((l, i) => ctx.fillText(l, 256, 250 + i * 54 - (lines.length - 1) * 27));
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-    void svgImage(icon).then((img) => { ctx.drawImage(img, 196, 30, 120, 120); tex.needsUpdate = true; });
+    void svgImage(kind === 'chance' ? ICONS.chance : ICONS.chest).then((img) => { ctx.drawImage(img, 196, 30, 120, 120); tex.needsUpdate = true; });
     const mat = [new THREE.MeshLambertMaterial({ color: INK }), new THREE.MeshLambertMaterial({ color: INK }), new THREE.MeshLambertMaterial({ map: tex }), new THREE.MeshLambertMaterial({ color: INK }), new THREE.MeshLambertMaterial({ color: INK }), new THREE.MeshLambertMaterial({ color: INK })];
     const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.09, 1.0), mat);
     box.castShadow = true; box.position.y = BOARD_Y + 0.045;
@@ -483,8 +562,22 @@ export class Board3D implements BoardView {
     return g;
   }
 
+  /** A die face drawn as a bevelled block from the theme pack, with pips. */
+  private blockFace(n: number): THREE.CanvasTexture {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+    const ctx = c.getContext('2d')!;
+    drawSprite(ctx, 'used_block', 0, 0, 256, 256);
+    const pips: Record<number, [number, number][]> = { 1: [[128, 128]], 2: [[80, 80], [176, 176]], 3: [[72, 72], [128, 128], [184, 184]], 4: [[80, 80], [176, 80], [80, 176], [176, 176]], 5: [[76, 76], [180, 76], [128, 128], [76, 180], [180, 180]], 6: [[80, 68], [176, 68], [80, 128], [176, 128], [80, 188], [176, 188]] };
+    for (const [x, y] of pips[n] ?? []) {
+      ctx.fillStyle = PIXEL_INK; ctx.fillRect(x - 22, y - 22, 44, 44);
+      ctx.fillStyle = '#fff4d6'; ctx.fillRect(x - 16, y - 16, 32, 32);
+    }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter;
+    return t;
+  }
+
   private async loadDiceFaces(): Promise<void> {
-    const faces = await Promise.all([1, 2, 3, 4, 5, 6].map((n) => svgTexture(dieFace(n), 256)));
+    const faces = themed() ? [1, 2, 3, 4, 5, 6].map((n) => this.blockFace(n)) : await Promise.all([1, 2, 3, 4, 5, 6].map((n) => svgTexture(dieFace(n), 256)));
     this.dieTextures = faces;
     // material order: +x, -x, +y, -y, +z, -z  → pips 1,6,2,5,3,4 (opposites sum to 7)
     const order = [1, 6, 2, 5, 3, 4];
@@ -515,6 +608,7 @@ export class Board3D implements BoardView {
   private drawBoard(state: GameState): void {
     const ctx = this.boardCanvas.getContext('2d')!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (themed()) { this.drawThemedBoard(ctx, state); this.boardTex.needsUpdate = true; return; }
     ctx.fillStyle = '#fbf3e0'; ctx.fillRect(0, 0, TEX, TEX);
     // Subtle grain
     for (let i = 0; i < 4000; i++) { ctx.fillStyle = `rgba(43,33,24,${Math.random() * 0.05})`; ctx.fillRect(Math.random() * TEX, Math.random() * TEX, 2, 2); }
@@ -526,14 +620,123 @@ export class Board3D implements BoardView {
     ctx.font = `700 190px ${fontStack()}`;
     ctx.lineWidth = 16; ctx.lineJoin = 'round';
     ctx.strokeStyle = INK; ctx.fillStyle = '#d9413a';
-    ctx.fillText('PAPER', 14, 14); ctx.strokeText('PAPER', 0, 0); ctx.fillStyle = '#fbf3e0'; ctx.fillText('PAPER', 0, 0);
+    const [t1, t2raw] = THEME.title;
+    const t2 = t2raw.split('').join(' ');
+    ctx.fillText(t1, 14, 14); ctx.strokeText(t1, 0, 0); ctx.fillStyle = '#fbf3e0'; ctx.fillText(t1, 0, 0);
     ctx.font = `700 92px ${fontStack()}`;
     ctx.lineWidth = 10; ctx.fillStyle = '#d9413a';
-    ctx.fillText('T Y C O O N', 8, 150); ctx.strokeText('T Y C O O N', 0, 142); ctx.fillStyle = '#fbf3e0'; ctx.fillText('T Y C O O N', 0, 142);
+    ctx.fillText(t2, 8, 150); ctx.strokeText(t2, 0, 142); ctx.fillStyle = '#fbf3e0'; ctx.fillText(t2, 0, 142);
     ctx.restore();
 
     for (const space of state.board) this.drawSpace(ctx, space);
     this.boardTex.needsUpdate = true;
+  }
+
+  /** Board face in the pixel-art theme: sky, scenery and a logo in the middle, block-style spaces around. */
+  private drawThemedBoard(ctx: CanvasRenderingContext2D, state: GameState): void {
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = SKY; ctx.fillRect(0, 0, TEX, TEX);
+    const inner = CORNER * S;
+    const x0 = inner + 8, x1 = TEX - inner - 8, y1 = TEX - inner - 8;
+    // ground along the bottom of the middle, hills and bushes on it, clouds above
+    tileSprite(ctx, 'ground_top', x0, y1 - 48, x1 - x0, 48, 3);
+    drawSprite(ctx, 'hill', x0 + 20, y1 - 48 - 190, 64 * 6, 32 * 6);
+    drawSprite(ctx, 'hill', x1 - 20 - 64 * 4, y1 - 48 - 128, 64 * 4, 32 * 4);
+    drawSprite(ctx, 'hill_small', x0 + 560, y1 - 48 - 96, 32 * 3, 32 * 3);
+    drawSprite(ctx, 'bush', x0 + 430, y1 - 48 - 48, 48 * 3, 16 * 3);
+    drawSprite(ctx, 'bush', x1 - 420, y1 - 48 - 48, 48 * 3, 16 * 3);
+    drawSprite(ctx, 'castle_small', x1 - 300, y1 - 48 - 80 * 3, 96 * 3, 80 * 3);
+    drawSprite(ctx, 'cloud_face', x0 + 90, inner + 60, 64 * 4, 16 * 4);
+    drawSprite(ctx, 'cloud_big', x1 - 380, inner + 40, 48 * 5, 32 * 5);
+    drawSprite(ctx, 'cloud_mid', x0 + 560, inner + 190, 32 * 4, 32 * 4);
+    drawSprite(ctx, 'cloud_small', x1 - 700, inner + 120, 48 * 4, 16 * 4);
+    for (let i = 0; i < 5; i++) drawSprite(ctx, i % 2 ? 'coin' : 'coin2', x0 + 520 + i * 60, y1 - 48 - 330, 40, 40);
+    // logo
+    const [t1, t2] = THEME.title;
+    const cx = TEX / 2, cy = TEX / 2 - 250;
+    pixelTitle(ctx, t1, cx, cy - 70, 96, '#e52521');
+    pixelTitle(ctx, t2, cx, cy + 70, 150, '#fbd000');
+    for (const space of state.board) this.drawThemedSpace(ctx, space);
+  }
+
+  private drawThemedSpace(ctx: CanvasRenderingContext2D, space: Space): void {
+    const i = space.index;
+    const r = spaceRect(i);
+    const corner = i % 10 === 0;
+    const cx = (r.x + r.w / 2 + HALF) * S;
+    const cy = (r.z + r.d / 2 + HALF) * S;
+    const angle = corner ? 0 : sideAngle(i);
+    const w = (corner ? CORNER : UNIT) * S;
+    const d = CORNER * S;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    const pad = 3, b = 7;
+    const left = -w / 2 + pad, top = -d / 2 + pad, iw = w - 2 * pad, ih = d - 2 * pad;
+    ctx.fillStyle = PIXEL_INK; ctx.fillRect(left, top, iw, ih);
+    ctx.fillStyle = '#f9f1dc'; ctx.fillRect(left + b, top + b, iw - 2 * b, ih - 2 * b);
+    // ground strip along the outer edge (lava for the capture corner)
+    const gh = 42;
+    const gy = top + ih - b - gh;
+    if (space.type === 'gotojail') { ctx.fillStyle = '#c8321e'; ctx.fillRect(left + b, gy, iw - 2 * b, gh); tileSprite(ctx, 'lava_top', left + b, gy, iw - 2 * b, gh, gh / 16); }
+    else tileSprite(ctx, 'ground_top', left + b, gy, iw - 2 * b, gh, gh / 16);
+    let y = top + b + 10;
+    const textW = iw - 2 * b - 10;
+    if (space.type === 'property') {
+      const bandH = Math.round(d * 0.2);
+      ctx.fillStyle = spaceColor(space); ctx.fillRect(left + b, top + b, iw - 2 * b, bandH);
+      ctx.fillStyle = PIXEL_INK; ctx.fillRect(left + b, top + b + bandH, iw - 2 * b, 5);
+      y = top + b + bandH + 14;
+    }
+    ctx.fillStyle = PIXEL_INK; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const draw = (name: string, x: number, yy: number, sw: number, sh: number) => drawSprite(ctx, name, x, yy, sw, sh);
+    const nameOf = () => (space.type === 'jail' ? space.name.split(' / ')[0] : space.name);
+    const label = (text: string, px: number, yy: number, maxW: number): number => {
+      ctx.font = `${px}px ${pixelFont()}`;
+      const lines = wrapText(ctx, text.toUpperCase(), maxW);
+      let fs = px;
+      const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+      if (widest > maxW) { fs = Math.floor(px * maxW / widest); ctx.font = `${fs}px ${pixelFont()}`; }
+      for (const line of lines) { ctx.fillText(line, 0, yy); yy += fs * 1.45; }
+      return yy;
+    };
+    const price = (yy: number) => { if (!space.price) return; draw('coin', -34, yy - 2, 22, 22); ctx.font = `17px ${pixelFont()}`; ctx.textAlign = 'left'; ctx.fillText(String(space.price), -8, yy); ctx.textAlign = 'center'; };
+    if (corner) {
+      const nameY = top + b + 12;
+      if (space.type === 'go') {
+        label(nameOf(), 30, nameY, iw - 2 * b - 20);
+        ctx.font = `13px ${pixelFont()}`; ctx.fillText('COLLECT 200', 0, nameY + 46);
+        draw('flag_pole', -92, gy - 118, 22, 88); draw('flag_ball', -92, gy - 130, 22, 22); draw('goal_flag', -80, gy - 116, 26, 26);
+        draw('castle_small', -50, gy - 108, 96 * 1.35, 80 * 1.35);
+      } else if (space.type === 'jail') {
+        label(nameOf(), 20, nameY, iw - 2 * b - 20);
+        draw('chain_fence', -66, gy - 132, 96 * 1.36, 128 * 1.03);
+        ctx.font = `11px ${pixelFont()}`; ctx.fillText(T.justVisiting.toUpperCase(), 0, gy + 12);
+      } else if (space.type === 'freeparking') {
+        label(nameOf(), 22, nameY, iw - 2 * b - 20);
+        draw('cloud_big', -110, gy - 150, 48 * 3, 32 * 3); draw('cloud_small', 10, gy - 190, 48 * 2.2, 16 * 2.2);
+        for (let k = 0; k < 4; k++) draw(k % 2 ? 'coin' : 'coin3', -70 + k * 42, gy - 60, 30, 30);
+      } else {
+        label(nameOf(), 20, nameY, iw - 2 * b - 20);
+        draw('cannon', -88, gy - 148, 16 * 3.1, 48 * 3.1); draw('hard_block_gray', 10, gy - 100, 64, 64); draw('hard_block_gray', 10, gy - 40, 64, 64);
+      }
+      ctx.restore();
+      return;
+    }
+    let iconH = 0;
+    switch (space.type) {
+      case 'railroad': draw('pipe_top', -30, y, 60, 30); draw('pipe_body', -30, y + 30, 60, 30); iconH = 66; break;
+      case 'utility': draw(i === 12 ? 'qblock' : 'qblock3', -30, y, 60, 60); iconH = 66; break;
+      case 'chance': draw('qblock', -36, y, 72, 72); iconH = 78; break;
+      case 'chest': draw('mushroom_top', -42, y, 84, 28); draw('mushroom_stem', -14, y + 28, 28, 56); iconH = 90; break;
+      case 'tax': draw('coin', -34, y, 30, 30); draw('coin2', 4, y, 30, 30); iconH = 36; break;
+      default: break;
+    }
+    y += iconH;
+    const after = label(nameOf(), 15, y, textW);
+    if (space.price) price(after + 4);
+    if (space.type === 'tax') { ctx.font = `13px ${pixelFont()}`; ctx.fillText(`PAY ${space.amount}`, 0, after + 6); }
+    ctx.restore();
   }
 
   private drawSpace(ctx: CanvasRenderingContext2D, space: Space): void {
@@ -853,13 +1056,29 @@ export class Board3D implements BoardView {
       if (this.camMode === 'follow') this.setMode('overview');
     } else this.ring.visible = !!cur;
     this.pot.classList.toggle('hidden', !state.config.freeParkingJackpot);
-    this.pot.textContent = `Free Parking pot: $${state.freeParkingPot}`;
+    this.pot.textContent = `${T.freeParking} pot: ${money(state.freeParkingPot)}`;
     for (const p of state.players) this.tokens.get(p.id)?.setBankrupt(p.bankrupt);
     this.updateRing();
   }
 
-  private building(x: number, y: number, z: number, hotel: boolean, f: { along: [number, number] }): THREE.Group {
+  private building(x: number, y: number, z: number, hotel: boolean, f: { along: [number, number]; inward: [number, number] }): THREE.Group {
     const g = new THREE.Group();
+    if (themed()) {
+      const canvas = hotel ? spriteCanvas('castle_small', 1) : stackCanvas(['mushroom_top', 'mushroom_stem'], 1);
+      if (canvas) {
+        const { geometry, texture } = pixelCutout(canvas, 0.05);
+        const face = new THREE.MeshBasicMaterial({ map: texture, transparent: true, alphaTest: 0.05, side: THREE.DoubleSide });
+        const mesh = new THREE.Mesh(geometry, [face, new THREE.MeshLambertMaterial({ color: INK })]);
+        const hgt = hotel ? 0.5 : 0.3;
+        mesh.scale.set(hgt, hgt, 1);
+        mesh.castShadow = true;
+        mesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: texture, alphaTest: 0.5 });
+        g.add(mesh);
+        g.position.set(x, y, z);
+        g.rotation.y = Math.atan2(-f.inward[0], -f.inward[1]); // faces off the board, like the standees
+        return g;
+      }
+    }
     const w = hotel ? 0.36 : 0.17, hgt = hotel ? 0.2 : 0.13, dpt = hotel ? 0.2 : 0.17;
     const color = hotel ? '#d9413a' : '#3aa655';
     const roofColor = hotel ? '#a8302b' : '#2c7f41';
@@ -1085,7 +1304,7 @@ export class Board3D implements BoardView {
 
   drawCard(deck: 'chance' | 'chest', text?: string): void {
     const x = (deck === 'chance' ? -2.7 : 2.7) * K;
-    const color = deck === 'chance' ? '#ffe1b3' : '#dff1fa';
+    const color = this.deckColor(deck);
     // Card face: header + wrapped text
     const c = document.createElement('canvas'); c.width = 512; c.height = 336;
     const ctx = c.getContext('2d')!;
@@ -1093,8 +1312,8 @@ export class Board3D implements BoardView {
     ctx.fillStyle = color; ctx.fillRect(0, 0, 512, 78);
     ctx.lineWidth = 12; ctx.strokeStyle = INK; roundRect(ctx, 6, 6, 500, 324, 26); ctx.stroke();
     ctx.fillStyle = INK; ctx.fillRect(0, 74, 512, 6);
-    ctx.font = `700 34px ${fontStack()}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(deck === 'chance' ? 'CHANCE' : 'COMMUNITY CHEST', 256, 40);
+    ctx.font = themed() ? `26px ${pixelFont()}` : `700 34px ${fontStack()}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(deckName(deck).toUpperCase(), 256, 40);
     if (text) {
       ctx.font = `500 30px ${fontStack()}`;
       const lines = wrapText(ctx, text, 440);
@@ -1218,6 +1437,7 @@ export class Board3D implements BoardView {
       // idle pose only when no tween is driving this token (tweens call applyPose themselves)
       if (!this.busyTokens.has(tok)) tok.applyPose(0, 0, now);
     }
+    for (const b of this.billboards) b.rotation.y = Math.atan2(this.camPos.x - b.position.x, this.camPos.z - b.position.z);
     const pulse = 1 + Math.sin(now / 350) * 0.08;
     this.ring.scale.set(pulse, pulse, 1);
     this.renderer.render(this.scene, this.camera);

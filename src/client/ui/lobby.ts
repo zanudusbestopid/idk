@@ -4,6 +4,7 @@ import { TOKEN_LIST } from '../../shared/tokens.js';
 import { h, clear, toast } from '../dom.js';
 import { tokenSvg } from './home.js';
 import { hostOnlyNote, rulesPanel, turnTimerRule } from './rules.js';
+import { T, THEME } from '../theme.js';
 
 export interface LobbyHandlers {
   onSetToken(token: string): void;
@@ -40,10 +41,10 @@ export class LobbyScreen {
     const copyBtn = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => this.copyLink() }, 'Copy invite link');
     const leaveBtn = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => handlers.onLeave() }, 'Leave');
     const rules = h('details', { class: 'rules-fold' },
-      h('summary', null, 'House rules ', h('span', { class: 'muted small' }, '(auctions, Free Parking, starting cash…)')), this.rulesEl);
+      h('summary', null, 'House rules ', h('span', { class: 'muted small' }, `(auctions, ${T.freeParking}, starting cash…)`)), this.rulesEl);
 
     const hero = h('div', { class: 'title-hero' },
-      h('h1', { class: 'title-art' }, h('span', null, 'PAPER'), h('span', null, 'TYCOON')),
+      h('h1', { class: 'title-art' }, h('span', null, THEME.title[0]), h('span', null, THEME.title[1])),
       h('p', { class: 'tagline hand' }, 'Waiting room. Share the code or the link; friends can join from any browser.'));
     const card = h('div', { class: 'setup-card paper lobby' },
       h('div', { class: 'field', style: idx(0) }, h('label', null, 'Room code'), h('div', { class: 'code-box' }, this.codeEl, copyBtn), this.linkEl),

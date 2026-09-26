@@ -1,9 +1,10 @@
 import type { GameState, Space } from '../../shared/types.js';
 import { dieFace } from '../art/dice.js';
 import { ICONS } from '../art/icons.js';
-import { h, clear, sleep } from '../dom.js';
+import { h, clear, money, sleep } from '../dom.js';
 import { sfx } from '../audio.js';
 import { dur } from '../settings.js';
+import { T, THEME, deckName } from '../theme.js';
 import { tokenSvg } from './home.js';
 
 export const GROUP_COLORS: Record<string, string> = {
@@ -126,21 +127,24 @@ export class Board implements BoardView {
       const content = h('div', { class: 'content' });
       const icon = spaceIcon(space);
       if (icon) content.appendChild(h('span', { class: 'sicon', html: icon }));
-      const shortName = space.type === 'chest' ? 'Community Chest' : space.type === 'jail' ? 'Jail' : space.name;
+      const shortName = space.type === 'chest' ? T.chest : space.type === 'jail' ? T.jail : space.name;
       content.appendChild(h('div', { class: 'sname' }, shortName));
-      if (space.price) content.appendChild(h('div', { class: 'sprice' }, `$${space.price}`));
-      if (space.type === 'tax') content.appendChild(h('div', { class: 'sprice' }, `Pay $${space.amount}`));
+      if (space.price) content.appendChild(h('div', { class: 'sprice' }, money(space.price)));
+      if (space.type === 'tax') content.appendChild(h('div', { class: 'sprice' }, `Pay ${money(space.amount ?? 0)}`));
       el.appendChild(content);
       el.appendChild(h('div', { class: 'houses' }));
       this.board.appendChild(el);
       this.spaces[space.index] = el;
     }
     // Center
-    const chance = h('div', { class: 'deck deck--chance' }, h('span', { html: ICONS.chance }), 'CHANCE');
-    const chest = h('div', { class: 'deck deck--chest' }, h('span', { html: ICONS.chest }), h('span', null, 'COMMUNITY'), h('span', null, 'CHEST'));
+    const chance = h('div', { class: 'deck deck--chance' }, h('span', { html: ICONS.chance }), deckName('chance').toUpperCase());
+    const chestLabel = deckName('chest').toUpperCase();
+    const chestSplit = chestLabel.indexOf(' ');
+    const chestWords = chestSplit > 0 ? [chestLabel.slice(0, chestSplit), chestLabel.slice(chestSplit + 1)] : [chestLabel];
+    const chest = h('div', { class: 'deck deck--chest' }, h('span', { html: ICONS.chest }), ...chestWords.map((w) => h('span', null, w)));
     this.dice = [h('div', { class: 'die', html: dieFace(1) }), h('div', { class: 'die', html: dieFace(1) })];
     const center = h('div', { class: 'center' },
-      h('div', { class: 'logo title-art' }, 'PAPER', h('span', { class: 'small' }, 'TYCOON')),
+      h('div', { class: 'logo title-art' }, THEME.title[0], h('span', { class: 'small' }, THEME.title[1])),
       h('div', { class: 'middle' }, chance, h('div', { class: 'dice-area' }, h('div', { class: 'dice' }, ...this.dice)), chest),
       h('div', { class: 'bottom' }, this.banner, this.pot),
     );
@@ -203,7 +207,7 @@ export class Board implements BoardView {
       (this.banner.lastChild as HTMLElement).textContent = mine ? ' win!' : ' wins!';
     }
     this.pot.classList.toggle('hidden', !state.config.freeParkingJackpot);
-    this.pot.textContent = `Free Parking pot: $${state.freeParkingPot}`;
+    this.pot.textContent = `${T.freeParking} pot: ${money(state.freeParkingPot)}`;
     for (const p of state.players) {
       const t = this.tokens.get(p.id);
       if (!t) continue;

@@ -12,6 +12,7 @@ import {
   nameTag, openTradesContent, pauseContent, playerName, showCard, standingsContent,
 } from './dialogs.js';
 import { dur, getSettings } from '../settings.js';
+import { T, cardText, deckName } from '../theme.js';
 import { tokenSvg } from './home.js';
 
 export interface GameHandlers {
@@ -272,11 +273,13 @@ export class GameScreen {
         this.bumpCash(ev.from, -ev.amount); this.bumpCash(ev.to, ev.amount);
         await sleep(dur(250));
         return;
-      case 'card':
-        this.board.drawCard?.(ev.deck, ev.text);
+      case 'card': {
+        const text = cardText(ev.deck, ev.cardId, ev.text);
+        this.board.drawCard?.(ev.deck, text);
         await sleep(dur(this.mode3d ? 900 : 350));
-        await showCard(this.modals, ev.deck, ev.text, this.mode3d);
+        await showCard(this.modals, ev.deck, text, this.mode3d);
         return;
+      }
       case 'bought':
         sfx.cash(); this.board.updateStatic(state); this.board.flash(ev.space); this.flyDeed(ev.space, ev.player); await sleep(dur(450)); return;
       case 'auctionEnded':
@@ -347,12 +350,12 @@ export class GameScreen {
           h('div', { class: 'pname' }, p.name,
             p.id === this.meId ? h('span', { class: 'tag tag--you' }, 'you') : null,
             this.room?.hostId === p.id ? h('span', { class: 'tag tag--host' }, 'host') : null,
-            p.inJail ? h('span', { class: 'tag tag--jail' }, 'in jail') : null,
+            p.inJail ? h('span', { class: 'tag tag--jail' }, `in ${T.jail}`) : null,
             !p.connected ? h('span', { class: 'tag tag--off' }, 'away') : null,
             p.bankrupt ? h('span', { class: 'tag' }, 'bankrupt') : null),
           h('div', { class: 'pcash' }, p.bankrupt ? '—' : money(p.cash))),
         props,
-        h('div', { class: 'pmeta muted' }, p.bankrupt ? null : `worth ${money(netWorth(state, p.id))}`, p.jailCards > 0 ? ` · ${p.jailCards} jail card${p.jailCards > 1 ? 's' : ''}` : null),
+        h('div', { class: 'pmeta muted' }, p.bankrupt ? null : `worth ${money(netWorth(state, p.id))}`, p.jailCards > 0 ? ` · ${p.jailCards} ${T.jailCard}${p.jailCards > 1 ? 's' : ''}` : null),
       );
       this.playersEl.appendChild(card);
     }
@@ -386,11 +389,11 @@ export class GameScreen {
     let hint: HTMLElement;
     if (state.phase === 'roll' && isMyTurn) {
       if (me.inJail) {
-        hint = h('span', { class: 'hint' }, `You are in jail (turn ${me.jailTurns + 1} of ${state.config.maxJailTurns}). Roll doubles to get out, or pay.`);
+        hint = h('span', { class: 'hint' }, `You are in ${T.jail} (turn ${me.jailTurns + 1} of ${state.config.maxJailTurns}). Roll doubles to get out, or pay.`);
         add(hint,
           btn('Roll for doubles', { type: 'roll' }, 'btn btn--primary btn--lg', legal.has('roll')),
           btn(`Pay ${money(state.config.jailFine)}`, { type: 'payJailFine' }, 'btn btn--warn', legal.has('payJailFine')),
-          me.jailCards > 0 ? btn('Use jail card', { type: 'useJailCard' }, 'btn btn--blue', legal.has('useJailCard')) : null);
+          me.jailCards > 0 ? btn(`Use ${T.jailCard}`, { type: 'useJailCard' }, 'btn btn--blue', legal.has('useJailCard')) : null);
       } else {
         hint = h('span', { class: 'hint' }, state.canRollAgain ? 'Doubles! Roll again.' : 'Your turn.');
         add(hint, btn('Roll dice', { type: 'roll' }, 'btn btn--primary btn--lg', legal.has('roll')));
@@ -546,26 +549,26 @@ function describeEvent(ev: GameEvent, state: GameState): (string | HTMLElement)[
   const sp = (i: number) => h('b', null, state.board[i]?.name ?? `#${i}`);
   switch (ev.type) {
     case 'rolled': return [n(ev.player), ` rolled ${ev.dice[0]} + ${ev.dice[1]}${ev.doubles ? ' (doubles!)' : ''}`];
-    case 'moved': return ev.passedGo ? [n(ev.player), ' passed Go and landed on ', sp(ev.to)] : [n(ev.player), ev.direct ? ' went to ' : ' landed on ', sp(ev.to)];
+    case 'moved': return ev.passedGo ? [n(ev.player), ` passed ${T.go} and landed on `, sp(ev.to)] : [n(ev.player), ev.direct ? ' went to ' : ' landed on ', sp(ev.to)];
     case 'paid': return [n(ev.from), ` paid ${money(ev.amount)} to `, n(ev.to), ev.reason ? ` (${ev.reason})` : ''];
     case 'bought': return [n(ev.player), ' bought ', sp(ev.space), ` for ${money(ev.price)}`];
     case 'declined': return [n(ev.player), ' declined to buy ', sp(ev.space)];
     case 'auctionStarted': return ['Auction started for ', sp(ev.space)];
     case 'bid': return [n(ev.player), ` bid ${money(ev.amount)}`];
     case 'auctionEnded': return ev.winner ? [n(ev.winner), ' won the auction for ', sp(ev.space), ` at ${money(ev.amount)}`] : ['Nobody bid on ', sp(ev.space)];
-    case 'card': return [n(ev.player), ` drew ${ev.deck === 'chance' ? 'Chance' : 'Community Chest'}: “${ev.text}”`];
-    case 'built': return [n(ev.player), ev.houses === 5 ? ' built a hotel on ' : ` built a house on `, sp(ev.space)];
+    case 'card': return [n(ev.player), ` drew ${deckName(ev.deck)}: “${cardText(ev.deck, ev.cardId, ev.text)}”`];
+    case 'built': return [n(ev.player), ev.houses === 5 ? ` built a ${T.hotel} on ` : ` built a ${T.house} on `, sp(ev.space)];
     case 'soldHouse': return [n(ev.player), ' sold a building on ', sp(ev.space)];
     case 'mortgaged': return [n(ev.player), ' mortgaged ', sp(ev.space)];
     case 'unmortgaged': return [n(ev.player), ' lifted the mortgage on ', sp(ev.space)];
-    case 'jailed': return [n(ev.player), ` went to jail (${ev.reason})`];
-    case 'freed': return [n(ev.player), ev.how === 'doubles' ? ' rolled doubles and left jail' : ev.how === 'card' ? ' used a Get Out of Jail Free card' : ev.how === 'fine' ? ' paid the fine and left jail' : ' had to pay and leave jail'];
+    case 'jailed': return [n(ev.player), ` went to ${T.jail} (${ev.reason})`];
+    case 'freed': return [n(ev.player), ev.how === 'doubles' ? ` rolled doubles and left ${T.jail}` : ev.how === 'card' ? ` used a ${T.jailCard}` : ev.how === 'fine' ? ` paid the fine and left ${T.jail}` : ` had to pay and leave ${T.jail}`];
     case 'tradeProposed': return [n(ev.trade.from), ' proposed a trade to ', n(ev.trade.to)];
     case 'tradeAccepted': return [n(ev.trade.to), ' accepted a trade from ', n(ev.trade.from)];
     case 'tradeRejected': return ['Trade between ', n(ev.trade.from), ' and ', n(ev.trade.to), ' was declined'];
     case 'debt': return [n(ev.player), ` owes ${money(ev.amount)} to `, n(ev.creditor)];
     case 'bankrupt': return [n(ev.player), ' went bankrupt', ev.creditor ? [' to ', n(ev.creditor)] : ''].flat();
-    case 'freeParking': return [n(ev.player), ` collected ${money(ev.amount)} from Free Parking`];
+    case 'freeParking': return [n(ev.player), ` collected ${money(ev.amount)} from ${T.freeParking}`];
     case 'turnStarted': return [h('span', { class: 'muted' }, `— Turn ${ev.turnNumber}: `), n(ev.player)];
     case 'turnEnded': return null;
     case 'gameOver': return [h('b', null, '🏆 '), n(ev.winner), ' wins the game!'];

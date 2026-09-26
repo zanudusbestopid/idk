@@ -4,7 +4,9 @@
 import { chooseBotAction, type Difficulty } from '../engine/bot.js';
 import { applyAction, createGame, type ActionResult } from '../engine/engine.js';
 import type { Action, GameConfig, GameEvent, GameState } from '../shared/types.js';
+import { themedBoard } from '../shared/theme.js';
 import { TOKEN_BY_ID, TOKEN_LIST } from '../shared/tokens.js';
+import { THEME } from './theme.js';
 
 export const HUMAN_ID = 'you';
 export const SAVE_KEY = 'pt.solo';
@@ -62,7 +64,7 @@ export class LocalGame {
         ...setup.bots.map((b, i) => ({ id: `bot${i + 1}`, name: b.name, token: b.token, color: TOKEN_BY_ID[b.token]?.color ?? '#888' })),
       ];
       const seed = Math.floor(Math.random() * 2 ** 31) || 1;
-      this.state = createGame(setup.config, players, seed);
+      this.state = createGame(setup.config, players, seed, themedBoard(THEME));
       for (const p of this.state.players) p.connected = true;
       this.save();
     }

@@ -8,14 +8,18 @@ import { GameScreen, loadBoardPref } from './ui/game.js';
 import { Board3D, webglAvailable } from './ui/board3d.js';
 import { renderSetup } from './ui/setup.js';
 import { warmCharacters } from './sprites.js';
+import { loadPack } from './art/pack.js';
 import type { RoomView } from '../shared/protocol.js';
 import { DEFAULT_CONFIG, _forceNextRoll } from '../engine/engine.js';
 import { demoState } from './demo.js';
 import type { GameState } from '../shared/types.js';
 import { TOKEN_BY_ID } from '../shared/tokens.js';
+import { THEME } from './theme.js';
 
 const app = document.getElementById('app')!;
 document.body.insertAdjacentHTML('afterbegin', PAPER_DEFS);
+document.title = THEME.name;
+document.body.dataset.theme = THEME.id;
 document.addEventListener('pointerdown', unlockAudio, { once: true });
 
 let local: LocalGame | null = null;
@@ -96,4 +100,4 @@ function startGame(game: LocalGame): void {
 }
 
 app.appendChild(h('div', { class: 'screen-center' }, h('div', { class: 'paper', style: { padding: '20px 28px', fontWeight: '600' } }, 'Loading…')));
-void warmCharacters().finally(() => showSetup());
+void Promise.all([warmCharacters(), loadPack()]).finally(() => showSetup());

@@ -7,6 +7,7 @@ import { h, clear, money, sleep } from '../dom.js';
 import { GROUP_COLORS, LIGHT_GROUPS, spaceColor } from './board.js';
 import { tokenSvg } from './home.js';
 import { getSettings, updateSettings } from '../settings.js';
+import { T, THEME, cap, deckName } from '../theme.js';
 
 export type Send = (a: Action) => void;
 
@@ -46,7 +47,7 @@ export function confirmDialog(modals: Modals, text: string, onYes: () => void, y
 // ---------- shared pieces ----------
 
 export function playerName(state: GameState, id: string | null): string {
-  if (id === null) return 'the Bank';
+  if (id === null) return T.bank;
   return state.players.find((p) => p.id === id)?.name ?? '?';
 }
 
@@ -75,7 +76,7 @@ export function deedCard(state: GameState, index: number, opts: { diceTotal?: nu
   const color = spaceColor(space);
   const light = space.group ? LIGHT_GROUPS.has(space.group) : space.type === 'utility';
   const band = h('div', { class: `deed-band ${light ? 'is-light' : ''}`, style: { '--band': color } as unknown as Record<string, string> },
-    h('div', { class: 'kind' }, space.type === 'property' ? 'TITLE DEED' : space.type === 'railroad' ? 'RAILROAD' : 'UTILITY'),
+    h('div', { class: 'kind' }, space.type === 'property' ? T.deed.toUpperCase() : space.type === 'railroad' ? T.railroad.toUpperCase() : T.utility.toUpperCase()),
     h('div', { class: 'dname' }, space.name));
   const body = h('div', { class: 'deed-body' });
   const owner = ps?.owner ?? null;
@@ -87,21 +88,21 @@ export function deedCard(state: GameState, index: number, opts: { diceTotal?: nu
     const hasSet = !!owner && GROUPS[space.group!].every((i) => state.properties[i]?.owner === owner);
     row('Rent', money(space.rent[0]), houses === 0 && !hasSet);
     row('Rent with full set', money(space.rent[0] * 2), houses === 0 && hasSet);
-    for (let i = 1; i <= 4; i++) row(`With ${i} house${i > 1 ? 's' : ''}`, money(space.rent[i]), houses === i);
-    row('With hotel', money(space.rent[5]), houses === 5);
+    for (let i = 1; i <= 4; i++) row(`With ${i} ${i > 1 ? T.houses : T.house}`, money(space.rent[i]), houses === i);
+    row(`With ${T.hotel}`, money(space.rent[5]), houses === 5);
     body.appendChild(table);
-    body.appendChild(h('div', { class: 'foot' }, `Houses cost ${money(space.houseCost!)} each · Mortgage value ${money(mortgageValue(space))}`));
+    body.appendChild(h('div', { class: 'foot' }, `${cap(T.houses)} cost ${money(space.houseCost!)} each · Mortgage value ${money(mortgageValue(space))}`));
   } else if (space.type === 'railroad') {
     body.appendChild(h('span', { class: 'deed-icon', html: ICONS.railroad }));
     const n = ownerCount(RAILROADS);
-    [25, 50, 100, 200].forEach((r, i) => row(`Rent with ${i + 1} railroad${i > 0 ? 's' : ''}`, money(r), n === i + 1));
+    [25, 50, 100, 200].forEach((r, i) => row(`Rent with ${i + 1} ${i > 0 ? T.railroads : T.railroad}`, money(r), n === i + 1));
     body.appendChild(table);
     body.appendChild(h('div', { class: 'foot' }, `Mortgage value ${money(mortgageValue(space))}`));
   } else if (space.type === 'utility') {
     body.appendChild(h('span', { class: 'deed-icon', html: /water/i.test(space.name) ? ICONS.water : ICONS.electric }));
     const n = ownerCount(UTILITIES);
-    row('One utility owned', '4 × dice', n === 1);
-    row('Both utilities owned', '10 × dice', n === 2);
+    row(`One ${T.utility} owned`, '4 × dice', n === 1);
+    row(`Both ${T.utilities} owned`, '10 × dice', n === 2);
     body.appendChild(table);
     body.appendChild(h('div', { class: 'foot' }, `Mortgage value ${money(mortgageValue(space))}`));
   }
@@ -195,7 +196,7 @@ export class AuctionView {
 export async function showCard(modals: Modals, deck: 'chance' | 'chest', text: string, low = false): Promise<void> {
   sfx.card();
   const content = h('div', { class: `card-pop ${deck}` },
-    h('div', { class: 'card-head' }, h('span', { html: deck === 'chance' ? ICONS.chance : ICONS.chest }), deck === 'chance' ? 'CHANCE' : 'COMMUNITY CHEST'),
+    h('div', { class: 'card-head' }, h('span', { html: deck === 'chance' ? ICONS.chance : ICONS.chest }), deckName(deck).toUpperCase()),
     h('div', { class: 'card-text hand' }, text),
     h('div', { class: 'muted small', style: { textAlign: 'center', paddingBottom: '10px' } }, 'click to continue'));
   const handle = modals.show('card', content, { dismissible: true });
@@ -236,7 +237,7 @@ export class ManageView {
   update(state: GameState, meId: string): void {
     const me = state.players.find((p) => p.id === meId)!;
     this.cashEl.textContent = money(me.cash);
-    this.supply.textContent = `Bank has ${state.housesLeft} houses, ${state.hotelsLeft} hotels`;
+    this.supply.textContent = `Bank has ${state.housesLeft} ${T.houses}, ${state.hotelsLeft} ${T.hotels}`;
     clear(this.list);
     const mine = ownedBy(state, meId);
     if (mine.length === 0) { this.list.appendChild(h('p', { class: 'muted' }, 'You do not own anything yet.')); return; }
@@ -253,13 +254,13 @@ export class ManageView {
         const s = state.board[i];
         const ps = state.properties[i];
         const chip = h('span', { class: `chip ${ps.mortgaged ? 'is-mortgaged' : ''}`, style: { '--chip': GROUP_COLORS[key] ?? '#999' } as unknown as Record<string, string> });
-        const desc = ps.mortgaged ? 'mortgaged' : ps.houses === 5 ? 'hotel' : ps.houses > 0 ? `${ps.houses} house${ps.houses > 1 ? 's' : ''}` : '';
+        const desc = ps.mortgaged ? 'mortgaged' : ps.houses === 5 ? T.hotel : ps.houses > 0 ? `${ps.houses} ${ps.houses > 1 ? T.houses : T.house}` : '';
         const buttons = h('div', { class: 'pb' });
         if (s.type === 'property') {
           const b = canBuild(state, meId, i);
           const sh = canSellHouse(state, meId, i);
           buttons.append(
-            h('button', { class: 'btn btn--sm btn--good', type: 'button', disabled: !b.ok, title: b.ok ? `Build for ${money(s.houseCost!)}` : b.reason ?? '', onClick: () => this.send({ type: 'build', space: i }) }, ps.houses === 4 ? 'Hotel' : 'Build', ` ${money(s.houseCost!)}`),
+            h('button', { class: 'btn btn--sm btn--good', type: 'button', disabled: !b.ok, title: b.ok ? `Build for ${money(s.houseCost!)}` : b.reason ?? '', onClick: () => this.send({ type: 'build', space: i }) }, ps.houses === 4 ? cap(T.hotel) : 'Build', ` ${money(s.houseCost!)}`),
             h('button', { class: 'btn btn--sm', type: 'button', disabled: !sh.ok, title: sh.ok ? `Sell for ${money(s.houseCost! / 2)}` : sh.reason ?? '', onClick: () => this.send({ type: 'sellHouse', space: i }) }, 'Sell'),
           );
         }
@@ -296,7 +297,7 @@ export class DebtView {
     const d = state.debt!;
     const me = state.players.find((p) => p.id === meId)!;
     clear(this.text);
-    this.text.append('You owe ', h('b', null, money(d.amount)), ' to ', nameTag(state, d.creditor), ` (${d.reason}). You have `, h('b', null, money(me.cash)), '. Sell houses or mortgage properties to raise cash.');
+    this.text.append('You owe ', h('b', null, money(d.amount)), ' to ', nameTag(state, d.creditor), ` (${d.reason}). You have `, h('b', null, money(me.cash)), `. Sell ${T.houses} or mortgage properties to raise cash.`);
     this.manage.update(state, meId);
     const legal = legalActions(state, meId);
     this.payBtn.disabled = !legal.includes('payDebt');
@@ -354,8 +355,8 @@ export class TradeComposer {
     cards.addEventListener('change', () => { side.jailCards = Math.max(0, Math.min(owner.jailCards, Math.floor(Number(cards.value) || 0))); cards.value = String(side.jailCards); });
     return h('div', { class: 'col paper paper--flat' },
       h('h3', null, title, ' ', h('span', { class: 'muted small' }, `(${money(owner.cash)} cash)`)),
-      h('div', { class: 'cash' }, 'Cash $', cash),
-      owner.jailCards > 0 ? h('div', { class: 'cash' }, 'Jail cards', cards) : null,
+      h('div', { class: 'cash' }, THEME.currency === 'dollar' ? 'Cash $' : 'Cash', cash),
+      owner.jailCards > 0 ? h('div', { class: 'cash' }, `${T.jailCard}s`, cards) : null,
       list);
   }
 
@@ -380,7 +381,7 @@ export function tradeSummary(state: GameState, trade: Trade): HTMLElement {
     const parts: (HTMLElement | string)[] = [];
     if (side.cash) parts.push(h('span', { class: 'money' }, money(side.cash)));
     for (const i of side.properties) parts.push(h('span', { class: 'tag', style: { background: spaceColor(state.board[i]), color: LIGHT_GROUPS.has(state.board[i].group ?? state.board[i].type) ? '#2b2118' : '#fff' } }, state.board[i].name));
-    if (side.jailCards) parts.push(h('span', { class: 'tag' }, `${side.jailCards} jail card${side.jailCards > 1 ? 's' : ''}`));
+    if (side.jailCards) parts.push(h('span', { class: 'tag' }, `${side.jailCards} ${T.jailCard}${side.jailCards > 1 ? 's' : ''}`));
     if (parts.length === 0) parts.push(h('span', { class: 'muted' }, 'nothing'));
     return h('div', { class: 'line' }, nameTag(state, who), ' gives: ', ...parts);
   };
@@ -430,7 +431,7 @@ export function deedViewerContent(state: GameState, index: number, meId: string,
       const b = canBuild(state, meId, index); const sh = canSellHouse(state, meId, index);
       buttons.append(
         h('button', { class: 'btn btn--sm btn--good', type: 'button', disabled: !b.ok, title: b.reason ?? '', onClick: () => send({ type: 'build', space: index }) }, `Build ${money(s.houseCost!)}`),
-        h('button', { class: 'btn btn--sm', type: 'button', disabled: !sh.ok, title: sh.reason ?? '', onClick: () => send({ type: 'sellHouse', space: index }) }, 'Sell house'));
+        h('button', { class: 'btn btn--sm', type: 'button', disabled: !sh.ok, title: sh.reason ?? '', onClick: () => send({ type: 'sellHouse', space: index }) }, `Sell ${T.house}`));
     }
     const m = canMortgage(state, meId, index); const um = canUnmortgage(state, meId, index);
     if (ps.mortgaged) buttons.appendChild(h('button', { class: 'btn btn--sm btn--blue', type: 'button', disabled: !um.ok, title: um.reason ?? '', onClick: () => send({ type: 'unmortgage', space: index }) }, `Unmortgage ${money(Math.ceil(mortgageValue(s) * 1.1))}`));
@@ -496,11 +497,11 @@ export function pauseContent(state: GameState, has3d: boolean, hp: PauseHandlers
   renderCam();
   const c = state.config;
   const rules = h('ul', { class: 'rules-recap' },
-    h('li', null, `Starting cash ${money(c.startingCash)} · Go salary ${money(c.goSalary)}${c.doubleGoSalary ? ' (double on landing)' : ''}`),
+    h('li', null, `Starting cash ${money(c.startingCash)} · ${T.go} salary ${money(c.goSalary)}${c.doubleGoSalary ? ' (double on landing)' : ''}`),
     h('li', null, c.auctions ? 'Declined properties are auctioned' : 'No auctions'),
-    h('li', null, c.freeParkingJackpot ? `Free Parking jackpot on (pot ${money(state.freeParkingPot)})` : 'Free Parking does nothing'),
-    h('li', null, `Jail: fine ${money(c.jailFine)}, up to ${c.maxJailTurns} turns`),
-    h('li', null, 'Houses need the full color set and build evenly. Mortgages pay half price, lifting costs 10% more.'),
+    h('li', null, c.freeParkingJackpot ? `${T.freeParking} jackpot on (pot ${money(state.freeParkingPot)})` : `${T.freeParking} does nothing`),
+    h('li', null, `${T.jail}: fine ${money(c.jailFine)}, up to ${c.maxJailTurns} turns`),
+    h('li', null, `${cap(T.houses)} need the full color set and build evenly. Mortgages pay half price, lifting costs 10% more.`),
   );
   return h('div', { class: 'pause' },
     h('h2', null, h('span', { class: 'ico', html: ICONS.timer }), 'Paused'),

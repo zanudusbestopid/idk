@@ -18,7 +18,7 @@ const seq = (process.env.SEQ ?? '').split(',').filter(Boolean).map(Number);
 let elapsed = 0;
 for (const t of seq) { await page.waitForTimeout(t - elapsed); elapsed = t; await page.screenshot({ path: `shots/diag-${d1}${d2}-${t}.png` }); }
 await page.waitForTimeout(Math.max(0, Number(process.env.WAIT ?? 6500) - elapsed));
-await page.addStyleTag({ content: '.modal, .modal-backdrop, dialog, .overlay { display:none !important; visibility:hidden !important }' });
+if (!process.env.KEEP_MODAL) await page.addStyleTag({ content: '.modal, .modal-backdrop, dialog, .overlay { display:none !important; visibility:hidden !important }' });
 await page.waitForTimeout(300);
 const info = await page.evaluate(() => {
   const board = window.__pt.screen.board;

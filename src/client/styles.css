@@ -496,3 +496,20 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .setup-card .token-pick svg { width: 36px; height: 54px; }
 .pcard .ptoken svg { width: 40px; height: 60px; }
 .setup-card .bot svg, .lobby .player-row svg { width: 28px; height: 42px; }
+
+/* ----- pixel-art theme (private builds set body[data-theme]) ----- */
+body[data-theme="mario"] {
+  --accent: #e52521; --accent-2: #049cd8; --good: #43b047; --warn: #fbd000;
+  --wood: #5cb84a; --wood-dark: #3f8f33;
+}
+body[data-theme="mario"] .title-art {
+  font-family: "Press Start 2P", var(--font-ui); font-weight: 400; letter-spacing: 0; line-height: 1.25;
+  color: #fbd000; -webkit-text-stroke: 0; text-shadow: 3px 3px 0 #161616, 6px 6px 0 var(--accent);
+}
+body[data-theme="mario"] .title-art span:first-child { color: #e52521; font-size: 0.62em; text-shadow: 3px 3px 0 #161616, 6px 6px 0 #049cd8; }
+body[data-theme="mario"] .title-hero .title-art { font-size: clamp(1.7rem, 4.4vw, 3.6rem); }
+body[data-theme="mario"] .setup .title-art, body[data-theme="mario"] .home .title-art { font-size: clamp(1.3rem, 3.4vw, 2rem); }
+body[data-theme="mario"] .board .logo.title-art { font-size: clamp(0.9rem, 2.6vw, 1.5rem); }
+body[data-theme="mario"] .title-hero .tagline { font-family: "Press Start 2P", var(--font-ui); font-size: clamp(0.62rem, 1.1vw, 0.85rem); line-height: 1.8; max-width: 34ch; }
+body[data-theme="mario"] .turn-toast, body[data-theme="mario"] .cam-label, body[data-theme="mario"] .deed-band .kind { font-family: "Press Start 2P", var(--font-ui); font-size: 0.7em; }
+body[data-theme="mario"] .app::before, body[data-theme="mario"] .title-hero { --wood: #5cb84a; }

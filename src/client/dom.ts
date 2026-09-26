@@ -1,4 +1,5 @@
 // Tiny DOM helpers. No framework: screens build elements once and patch them.
+import { THEME } from './theme.js';
 
 type Child = Node | string | number | null | undefined | false | Child[];
 
@@ -51,7 +52,9 @@ export function clear(el: Element): void {
 
 export function money(n: number): string {
   const sign = n < 0 ? '-' : '';
-  return `${sign}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`;
+  const abs = Math.abs(Math.round(n));
+  if (THEME.currency === 'coin') return `${sign}${abs.toLocaleString('en-US')} ${abs === 1 ? 'coin' : 'coins'}`;
+  return `${sign}$${abs.toLocaleString('en-US')}`;
 }
 
 export function escapeHtml(s: string): string {
