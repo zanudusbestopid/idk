@@ -122,6 +122,22 @@ try {
   console.log('after leave:', fresh);
   if (fresh.scenes !== 1 || fresh.layers !== 1) errors.push(`after-leave check failed: ${JSON.stringify(fresh)}`);
   await shot(guest, 'online-home-after-leave');
+
+  // Flat-board preference: no scene, the layers sit over the wood background.
+  await guest.context().close();
+  await host.context().close();
+  const flatCtx = await browser.newContext({ viewport: DESKTOP });
+  await flatCtx.route(/^(?!http:\/\/localhost)/, (r) => r.abort());
+  await flatCtx.addInitScript(() => localStorage.setItem('pt.board', '2d'));
+  const flat = await flatCtx.newPage();
+  await flat.goto(base, { waitUntil: 'domcontentloaded' });
+  await flat.waitForSelector('#home-create');
+  await settle(flat, 1200);
+  const flatDom = await flat.evaluate(() => ({ scenes: document.querySelectorAll('.title-scene').length, layers: document.querySelectorAll('.title-layer').length }));
+  console.log('2d pref:', flatDom);
+  if (flatDom.scenes !== 0 || flatDom.layers !== 1) errors.push(`2d-pref check failed: ${JSON.stringify(flatDom)}`);
+  await shot(flat, 'online-home-2d');
+  await flatCtx.close();
   console.log('done; errors:', errors.length ? errors : 'none');
   if (errors.length) process.exitCode = 1;
 } finally {

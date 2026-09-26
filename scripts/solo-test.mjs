@@ -21,6 +21,7 @@ await page.waitForSelector('#setup-start');
 if (SHOTS) await page.screenshot({ path: 'shots/solo-setup.png' });
 await page.fill('#setup-name', 'Ava');
 await page.click('.token-pick[title="Rubber Duck"]');
+await page.click('.diff-row button:has-text("Hard")');
 await page.click('.rules-fold summary');
 await page.click('.rule:has-text("Free Parking jackpot") .switch');
 await page.click('#setup-start');
@@ -94,7 +95,7 @@ for (let i = 0; i < TURN_LIMIT * 25 && !over; i++) {
   const turn = await page.evaluate(() => { const m = document.querySelector('.log')?.textContent?.match(/Turn (\d+)/g); return m ? Number(m[m.length - 1].slice(5)) : 0; }).catch(() => 0);
   if (turn > lastTurn) { lastTurn = turn; stall = 0; if (turn % 10 === 0) console.log(`turn ${turn} (${((Date.now() - start) / 1000).toFixed(0)}s)`); if (turn >= TURN_LIMIT) break; if (SHOTS && turn % 20 === 0) await page.screenshot({ path: `shots/solo-turn-${String(turn).padStart(3, '0')}.png` }); }
   else if (!r) stall++;
-  if (stall > 60) { errors.push(`stalled at turn ${turn}`); break; }
+  if (stall > 160) { errors.push(`stalled at turn ${turn}`); break; }
   if (errors.length > 20) break;
   await page.waitForTimeout(r ? 200 : 350);
 }

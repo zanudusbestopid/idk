@@ -16,9 +16,12 @@ or switch to the flat 2D board with the button in the log panel. Two ways to pla
 Download `release/paper-tycoon-solo.html` and double-click it. The title screen is the live 3D board
 with a slow cinematic camera; the tokens you pick appear on it, and Start flies the camera into the
 game. Pick your token, choose how many
-computer players you face, set the house rules, and start. The computer players buy sensibly,
-bid in auctions, build on their monopolies, raise cash when they owe money, and occasionally
-offer you a trade for the last street of a set they are collecting.
+computer players you face and their skill (Easy, Normal, Hard), set the house rules, and start.
+The computer players plan color sets, keep a cash reserve sized to the rents ahead of them,
+bid in auctions up to what a street is worth to them (and to block your sets), build three
+houses a street before going higher, raise cash sensibly when they owe money, and propose
+trades that complete sets. Press Esc in a game for the pause menu: sound, animation speed,
+camera mode, a recap of the house rules, and quit.
 
 ## Online
 
