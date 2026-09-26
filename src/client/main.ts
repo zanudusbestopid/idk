@@ -5,6 +5,7 @@ import { PAPER_DEFS } from './art/paper.js';
 import { unlockAudio } from './audio.js';
 import { h, clear, toast } from './dom.js';
 import { Net } from './net.js';
+import { warmCharacters } from './sprites.js';
 import { Store, loadSession, saveSession } from './store.js';
 import { TitleScene, homePlayers, roomPlayers } from './title.js';
 import { GameScreen } from './ui/game.js';
@@ -151,6 +152,7 @@ net.onStatus((s) => {
   if (s === 'closed' && store.state.screen !== 'home') toast('Connection lost, reconnecting…', 'error', 1500);
 });
 
+void warmCharacters();
 // Boot: resume a saved session if we have one (same room code as the URL, or any).
 const saved = loadSession();
 if (saved && (!prefill || saved.code === prefill)) {

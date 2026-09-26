@@ -489,3 +489,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .setup-card .diff-row { margin-top: 8px; }
 .overlay.is-low { align-items: flex-end; background: transparent; padding-bottom: 72px; }
 .overlay.is-low .dialog { box-shadow: 0 6px 0 -2px var(--paper-edge), 0 8px 0 -1px var(--ink), 0 18px 30px -6px rgba(0,0,0,0.5); }
+
+/* pixel characters in the UI */
+.token-pick svg, .pcard .ptoken svg, .player-row svg, .bot svg, .standings .srow svg, .mini-token svg { image-rendering: pixelated; }
+.token-pick svg { width: 40px; height: 60px; }
+.setup-card .token-pick svg { width: 36px; height: 54px; }
+.pcard .ptoken svg { width: 40px; height: 60px; }
+.setup-card .bot svg, .lobby .player-row svg { width: 28px; height: 42px; }

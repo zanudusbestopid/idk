@@ -1,0 +1,31 @@
+import { resolve } from 'node:path';
+import { chromium } from 'playwright';
+const EXE = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+await ctx.route(/^https?:/, (r) => r.abort());
+const page = await ctx.newPage();
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('file://' + resolve(process.env.PT_HTML ?? 'dist/paper-tycoon-solo.html'), { waitUntil: 'domcontentloaded' });
+await page.waitForSelector('#setup-start');
+await page.click('#setup-start');
+await page.waitForSelector('.game canvas');
+await page.waitForTimeout(2500);
+const [d1, d2] = (process.env.ROLL ?? '2,4').split(',').map(Number);
+await page.evaluate(([a, b]) => window.__pt.forceRoll(a, b), [d1, d2]);
+await page.click('.actions button:has-text("Roll dice")');
+const seq = (process.env.SEQ ?? '').split(',').filter(Boolean).map(Number);
+let elapsed = 0;
+for (const t of seq) { await page.waitForTimeout(t - elapsed); elapsed = t; await page.screenshot({ path: `shots/diag-${d1}${d2}-${t}.png` }); }
+await page.waitForTimeout(Math.max(0, Number(process.env.WAIT ?? 6500) - elapsed));
+await page.addStyleTag({ content: '.modal, .modal-backdrop, dialog, .overlay { display:none !important; visibility:hidden !important }' });
+await page.waitForTimeout(300);
+const info = await page.evaluate(() => {
+  const board = window.__pt.screen.board;
+  const out = { cam: board.camera?.position?.toArray?.(), tokens: [] };
+  for (const [id, t] of board.tokens) out.tokens.push({ id, pos: t.group.position.toArray(), rotY: t.group.rotation.y, yaw: t.yaw, targetYaw: t.targetYaw, facing: t.facing, scaleX: t.sprite.scale.x, frame: t.frame, idx: board.tokenPos.get(id) });
+  return out;
+});
+console.log(JSON.stringify(info));
+await page.screenshot({ path: `shots/diag-${d1}${d2}.png` });
+await browser.close();

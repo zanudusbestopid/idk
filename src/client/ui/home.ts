@@ -1,5 +1,5 @@
-import { TOKENS } from '../art/tokens.js';
 import { TOKEN_LIST } from '../../shared/tokens.js';
+import { characterSvg } from '../sprites.js';
 import { h, clear } from '../dom.js';
 import { loadProfile, saveProfile } from '../store.js';
 
@@ -10,8 +10,9 @@ export interface HomeHandlers {
   onPreview?(name: string, token: string): void;
 }
 
+/** Markup for a token's character (pixel sprite, idle frame). */
 export function tokenSvg(id: string): string {
-  return TOKENS.find((t) => t.id === id)?.svg ?? TOKENS[0].svg;
+  return characterSvg(id);
 }
 
 const idx = (i: number) => ({ '--i': String(i) } as unknown as Record<string, string>);

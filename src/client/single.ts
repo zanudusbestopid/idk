@@ -7,6 +7,7 @@ import { HUMAN_ID, LocalGame, clearSaved, loadSaved, type SavedGame, type SoloSe
 import { GameScreen, loadBoardPref } from './ui/game.js';
 import { Board3D, webglAvailable } from './ui/board3d.js';
 import { renderSetup } from './ui/setup.js';
+import { warmCharacters } from './sprites.js';
 import type { RoomView } from '../shared/protocol.js';
 import { DEFAULT_CONFIG, _forceNextRoll } from '../engine/engine.js';
 import { demoState } from './demo.js';
@@ -95,4 +96,4 @@ function startGame(game: LocalGame): void {
 }
 
 app.appendChild(h('div', { class: 'screen-center' }, h('div', { class: 'paper', style: { padding: '20px 28px', fontWeight: '600' } }, 'Loading…')));
-showSetup();
+void warmCharacters().finally(() => showSetup());

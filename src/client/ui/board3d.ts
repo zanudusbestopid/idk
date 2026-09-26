@@ -12,7 +12,9 @@ import { h, clear, sleep } from '../dom.js';
 import { GROUP_COLORS, LIGHT_GROUPS, sideOf, spaceColor, type BoardView } from './board.js';
 import { tokenSvg } from './home.js';
 import { faceNumbers, simulateThrow } from './dicephysics.js';
-import { cutoutFor } from './cutout.js';
+import { pixelCutout } from './cutout.js';
+import { getCharacter, type Character } from '../sprites.js';
+import type { FrameName } from '../art/sprites.js';
 import { dur } from '../settings.js';
 
 const UNIT = 1.45;   // width of a regular space (was 1): room for several standees side by side
@@ -171,7 +173,7 @@ function easeInOut(t: number): number { return t < 0.5 ? 4 * t * t * t : 1 - Mat
 
 class TokenObj {
   group = new THREE.Group();
-  /** The cutout mesh (a plane until the extruded geometry is ready). */
+  /** The standee mesh (a plane until the character's frames are ready). */
   sprite: THREE.Mesh;
   shadow: THREE.Mesh;
   facing = 1;
@@ -181,7 +183,12 @@ class TokenObj {
   phase = Math.random() * 10;
   walkStep = 0;
   squash = 0; // 0..1 landing squash amount, decays
+  aspect = 1; // width / height of the character
+  contentScale = 1; // enlarges characters that only fill part of their cell (small sprites)
   private faceMat: THREE.MeshBasicMaterial;
+  private frames: Partial<Record<FrameName, { geometry: THREE.ExtrudeGeometry; texture: THREE.CanvasTexture }>> = {};
+  frame: FrameName | null = null;
+  private depthMat: THREE.MeshDepthMaterial | null = null;
   constructor(material: THREE.MeshBasicMaterial) {
     this.faceMat = material;
     this.sprite = new THREE.Mesh(new THREE.PlaneGeometry(TOKEN, TOKEN), material);
@@ -192,39 +199,84 @@ class TokenObj {
     this.shadow.scale.set(1.25, 0.7, 1);
     this.group.add(this.sprite, this.shadow);
   }
-  /** Swap the flat plane for the extruded paper cutout. */
-  useCutout(geometry: THREE.ExtrudeGeometry, texture: THREE.CanvasTexture): void {
+  /** Swap the flat plane for an extruded pixel-art standee with animation frames. */
+  useCharacter(ch: Character): void {
+    this.aspect = ch.w / ch.h;
+    this.contentScale = contentScaleFor(ch.frames.idle1);
+    for (const name of Object.keys(ch.frames) as FrameName[]) this.frames[name] = pixelCutout(ch.frames[name]);
+    const first = this.frames.idle1 ?? Object.values(this.frames)[0]!;
     const old = this.sprite;
-    this.faceMat.map = texture;
+    this.faceMat.map = first.texture;
     this.faceMat.transparent = true;
     this.faceMat.alphaTest = 0.05;
     this.faceMat.side = THREE.DoubleSide;
     this.faceMat.needsUpdate = true;
     const edge = new THREE.MeshLambertMaterial({ color: INK });
-    const mesh = new THREE.Mesh(geometry, [this.faceMat, edge]);
-    mesh.scale.set(TOKEN, TOKEN, 1);
-    mesh.position.y = 0; // geometry stands on y=0
+    const mesh = new THREE.Mesh(first.geometry, [this.faceMat, edge]);
     mesh.castShadow = true;
-    mesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: texture, alphaTest: 0.5 });
+    this.depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: first.texture, alphaTest: 0.5 });
+    mesh.customDepthMaterial = this.depthMat;
     this.group.remove(old);
     old.geometry.dispose();
-    this.sprite = mesh;
-    this.baseY = 0;
     this.group.add(mesh);
+    this.sprite = mesh;
+    this.frame = 'idle1';
+    this.baseY = 0;
     this.applyPose(0, 0);
   }
-  /** Procedural paper animation: breathing, waddle while walking, squash on landing. */
-  applyPose(hop: number, tilt: number, now = performance.now()): void {
+  setFrame(name: FrameName): void {
+    if (this.frame === name) return;
+    const f = this.frames[name] ?? this.frames.idle1;
+    if (!f) return;
+    this.frame = name;
+    this.sprite.geometry = f.geometry;
+    this.faceMat.map = f.texture;
+    this.faceMat.needsUpdate = true;
+    if (this.depthMat) { this.depthMat.map = f.texture; this.depthMat.needsUpdate = true; }
+  }
+  /** Procedural pose (breathing, waddle, squash) plus the sprite frame for this moment. */
+  applyPose(hop: number, tilt: number, now = performance.now(), walkT: number | null = null): void {
     const m = this.sprite;
-    const breathe = 1 + Math.sin(now / 520 + this.phase) * 0.018;
+    const isSprite = this.frame !== null;
+    if (isSprite) {
+      if (walkT !== null) {
+        if (hop > 0.16) this.setFrame('jump');
+        else if (walkT < 0.2) this.setFrame(this.walkStep % 2 ? 'walk1' : 'walk3');
+        else this.setFrame('walk2');
+      } else {
+        const blink = ((now + this.phase * 1000) % 2600) < 170;
+        this.setFrame(blink ? 'idle2' : 'idle1');
+      }
+    }
+    const breathe = isSprite ? 1 : 1 + Math.sin(now / 520 + this.phase) * 0.018;
     const sq = this.squash;
     const sy = breathe * (1 - sq * 0.22);
     const sx = (1 + sq * 0.18) * this.facing;
-    m.scale.set(TOKEN * sx, TOKEN * sy, 1);
-    m.position.y = (this.sprite.geometry instanceof THREE.PlaneGeometry ? TOKEN / 2 : 0) + hop;
-    m.rotation.z = tilt + Math.sin(now / 900 + this.phase) * 0.015;
+    const w = isSprite ? TOKEN * this.aspect * SPRITE_SCALE * this.contentScale : TOKEN;
+    const hgt = isSprite ? TOKEN * SPRITE_SCALE * this.contentScale : TOKEN;
+    m.scale.set(w * sx, hgt * sy, 1);
+    m.position.y = (isSprite ? 0 : TOKEN / 2) + hop;
+    m.rotation.z = tilt + (isSprite ? 0 : Math.sin(now / 900 + this.phase) * 0.015);
   }
   setBankrupt(b: boolean): void { this.faceMat.opacity = b ? 0.35 : 1; this.faceMat.transparent = true; this.faceMat.color.setScalar(b ? 0.55 : 1); }
+}
+
+const SPRITE_SCALE = 1.45; // standee height relative to TOKEN
+
+/** How much to enlarge a character whose pixels fill only part of the cell height (kept within 1–1.6×). */
+function contentScaleFor(canvas: HTMLCanvasElement): number {
+  const ctx = canvas.getContext('2d');
+  if (!ctx || !canvas.width || !canvas.height) return 1;
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  let top = canvas.height, bottom = -1;
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      if (data[(y * canvas.width + x) * 4 + 3] > 8) { if (y < top) top = y; if (y > bottom) bottom = y; break; }
+    }
+  }
+  if (bottom < top) return 1;
+  const frac = (bottom - top + 1) / canvas.height;
+  return Math.min(1.6, Math.max(1, 1 / frac));
 }
 
 export class Board3D implements BoardView {
@@ -539,7 +591,7 @@ export class Board3D implements BoardView {
       this.tokenPos.set(p.id, p.position);
       tok.yaw = tok.targetYaw = this.yawFor(p.position);
       tok.group.rotation.y = tok.yaw;
-      void cutoutFor(tokenSvg(p.token)).then(({ geometry, texture }) => { if (this.tokens.get(p.id) === tok) { tok.useCutout(geometry, texture); mat.visible = true; } }).catch(() => { void svgTexture(tokenSvg(p.token), 512).then((tex) => { mat.map = tex; mat.visible = true; mat.needsUpdate = true; }); });
+      void getCharacter(p.token).then((ch) => { if (this.tokens.get(p.id) === tok) { tok.useCharacter(ch); mat.visible = true; } }).catch(() => { void svgTexture(tokenSvg(p.token), 512).then((tex) => { mat.map = tex; mat.visible = true; mat.needsUpdate = true; }); });
     }
     this.resize();
     if (!this.cameraPlaced) {
@@ -702,12 +754,13 @@ export class Board3D implements BoardView {
     this.smoothTravel.lerp(dirs.travel, k).normalize();
     const z = this.followZoom;
     const p = tok.group.position;
+    // Mostly in front of the standee (its face points off the board) and a little behind its direction of travel.
     const pos = new THREE.Vector3(
-      p.x + this.smoothOut.x * 4.0 * z - this.smoothTravel.x * 2.2 * z,
-      BOARD_Y + 3.9 * z,
-      p.z + this.smoothOut.y * 4.0 * z - this.smoothTravel.y * 2.2 * z,
+      p.x + this.smoothOut.x * 4.2 * z - this.smoothTravel.x * 1.5 * z,
+      BOARD_Y + 3.3 * z,
+      p.z + this.smoothOut.y * 4.2 * z - this.smoothTravel.y * 1.5 * z,
     );
-    const look = new THREE.Vector3(p.x + this.smoothTravel.x * 1.4 - this.smoothOut.x * 0.6, BOARD_Y + 0.3, p.z + this.smoothTravel.y * 1.4 - this.smoothOut.y * 0.6);
+    const look = new THREE.Vector3(p.x + this.smoothTravel.x * 1.0 - this.smoothOut.x * 0.5, BOARD_Y + 0.45, p.z + this.smoothTravel.y * 1.0 - this.smoothOut.y * 0.5);
     return { pos, look, tau: 0.3 };
   }
 
@@ -884,7 +937,7 @@ export class Board3D implements BoardView {
         const k = easeInOut(t);
         tok.group.position.lerpVectors(from, target, k);
         const lift = hop ? Math.sin(t * Math.PI) * 0.42 : 0;
-        tok.applyPose(lift, hop ? Math.sin(t * Math.PI) * 0.14 * side : 0);
+        tok.applyPose(lift, hop ? Math.sin(t * Math.PI) * 0.14 * side : 0, performance.now(), hop ? t : null);
         const sh = tok.shadow.scale; const shrink = hop ? 1 - Math.sin(t * Math.PI) * 0.35 : 1; sh.set(1.25 * shrink, 0.7 * shrink, 1);
       }, () => { if (hop) tok.squash = 1; resolve(); }));
     });
@@ -894,7 +947,8 @@ export class Board3D implements BoardView {
     if (tok.facing === facing) return;
     tok.facing = facing;
     const from = -facing;
-    this.tweens.push(timed(160, (t) => { const f = from + (facing - from) * t; tok.sprite.scale.x = TOKEN * f; }));
+    const w = tok.frame !== null ? TOKEN * tok.aspect * SPRITE_SCALE * tok.contentScale : TOKEN;
+    this.tweens.push(timed(160, (t) => { const f = from + (facing - from) * t; tok.sprite.scale.x = w * f; }));
   }
 
   async moveToken(playerId: string, from: number, to: number, opts: { direct?: boolean; backward?: boolean }, state: GameState): Promise<void> {
@@ -914,7 +968,7 @@ export class Board3D implements BoardView {
       await new Promise<void>((resolve) => this.tweens.push(timed(dur(650), (t) => {
         const k = easeInOut(t);
         tok.group.position.lerpVectors(startPos, target, k);
-        tok.applyPose(Math.sin(t * Math.PI) * 1.6, Math.sin(t * Math.PI * 2) * 0.2);
+        tok.applyPose(Math.sin(t * Math.PI) * 1.6, Math.sin(t * Math.PI * 2) * 0.2, performance.now(), t);
       }, () => { tok.squash = 1; this.busyTokens.delete(tok); resolve(); })));
       this.flash(to);
       this.updateRing();

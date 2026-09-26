@@ -6,6 +6,7 @@ import { defaultBots, type SavedGame, type SoloSetup } from '../local.js';
 import { loadProfile, saveProfile } from '../store.js';
 import { tokenSvg } from './home.js';
 import { rulesPanel } from './rules.js';
+import { SHEET_HELP, getCustomSheetUrl, setCustomSheetUrl, warmCharacters } from '../sprites.js';
 
 export interface SetupHandlers {
   onStart(setup: SoloSetup): void;
@@ -66,6 +67,27 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
   }
   renderTokens(); renderCount(); renderBots();
 
+  // Custom sprite sheet (stays in this browser only)
+  const sheetInput = h('input', { type: 'file', accept: 'image/png,image/gif,image/webp', id: 'setup-sheet', class: 'sr-only' }) as HTMLInputElement;
+  const sheetStatus = h('span', { class: 'muted small' }, getCustomSheetUrl() ? 'Custom sheet loaded.' : 'Using the built-in characters.');
+  const clearSheet = h('button', { class: `btn btn--sm ${getCustomSheetUrl() ? '' : 'hidden'}`, type: 'button', onClick: () => { setCustomSheetUrl(null); void warmCharacters().then(() => { renderTokens(); renderBots(); sheetStatus.textContent = 'Using the built-in characters.'; clearSheet.classList.add('hidden'); }); } }, 'Use built-in');
+  sheetInput.addEventListener('change', () => {
+    const file = sheetInput.files?.[0];
+    if (!file) return;
+    if (file.size > 2_000_000) { sheetStatus.textContent = 'That file is too big (2 MB max).'; return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCustomSheetUrl(String(reader.result));
+      void warmCharacters().then(() => { renderTokens(); renderBots(); sheetStatus.textContent = 'Custom sheet loaded.'; clearSheet.classList.remove('hidden'); });
+    };
+    reader.readAsDataURL(file);
+  });
+  const sheetRow = h('details', { class: 'rules-fold' },
+    h('summary', null, 'Custom sprite sheet ', h('span', { class: 'muted small' }, '(optional)')),
+    h('p', { class: 'muted small', style: { margin: '6px 0' } }, SHEET_HELP),
+    h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+      h('label', { class: 'btn btn--sm', for: 'setup-sheet' }, 'Load PNG…'), sheetInput, clearSheet, sheetStatus));
+
   const rulesHost = h('div');
   function renderRules(): void {
     clear(rulesHost);
@@ -93,6 +115,7 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
     h('div', { class: 'field', style: { '--i': '1' } as unknown as Record<string, string> }, h('label', null, 'Your token'), tokenGrid),
     h('div', { class: 'field', style: { '--i': '2' } as unknown as Record<string, string> }, h('label', null, 'Computer opponents'), countRow, botsEl, diffRow),
     h('div', { class: 'field', style: { '--i': '3' } as unknown as Record<string, string> }, rules),
+    h('div', { class: 'field', style: { '--i': '3' } as unknown as Record<string, string> }, sheetRow),
     h('div', { class: 'field field--start', style: { '--i': '4' } as unknown as Record<string, string> }, startBtn),
   ];
   const card = h('div', { class: 'setup-card paper' }, ...fields);
