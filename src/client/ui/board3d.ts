@@ -156,6 +156,14 @@ function timed(ms: number, step: (t: number, dt: number) => void, done?: () => v
   return { update: (now, dt) => { const t = Math.min(1, (now - start) / ms); step(t, dt); if (t >= 1) { done?.(); return false; } return true; } };
 }
 
+/** Shortest-path angular approach, with a time constant in ms. */
+function approachAngle(current: number, target: number, dt: number, tau: number): number {
+  let d = target - current;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return current + d * (1 - Math.exp(-dt / tau));
+}
+
 /** Simple cubic ease-in-out. */
 function easeInOut(t: number): number { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
 
@@ -165,6 +173,8 @@ class TokenObj {
   sprite: THREE.Mesh;
   shadow: THREE.Mesh;
   facing = 1;
+  yaw = 0;        // current world heading of the cutout's face (radians about Y)
+  targetYaw = 0;  // where it is turning toward
   baseY = BOARD_Y + 0.47;
   phase = Math.random() * 10;
   walkStep = 0;
@@ -525,6 +535,8 @@ export class Board3D implements BoardView {
       this.scene.add(tok.group);
       this.tokens.set(p.id, tok);
       this.tokenPos.set(p.id, p.position);
+      tok.yaw = tok.targetYaw = this.yawFor(p.position);
+      tok.group.rotation.y = tok.yaw;
       void cutoutFor(tokenSvg(p.token)).then(({ geometry, texture }) => { if (this.tokens.get(p.id) === tok) { tok.useCutout(geometry, texture); mat.visible = true; } }).catch(() => { void svgTexture(tokenSvg(p.token), 512).then((tex) => { mat.map = tex; mat.visible = true; mat.needsUpdate = true; }); });
     }
     this.resize();
@@ -811,6 +823,21 @@ export class Board3D implements BoardView {
     return new THREE.Vector3(x, BOARD_Y, z);
   }
 
+  /** Heading for a standee on a space: its face points outward, off the board, on that side. */
+  private yawFor(index: number): number {
+    const { out } = this.spaceDirs(index);
+    return Math.atan2(out.x, out.y);
+  }
+
+  /** In-plane facing (art looks right by default) for a move in world direction (dx, dz) while standing on `index`. */
+  private facingFor(dx: number, dz: number, index: number, tok: TokenObj): number {
+    const { out } = this.spaceDirs(index);
+    const rightX = out.y, rightZ = -out.x; // viewer outside the board, looking in
+    const dot = dx * rightX + dz * rightZ;
+    if (Math.abs(dot) < 0.05) return tok.facing;
+    return dot >= 0 ? 1 : -1;
+  }
+
   private slotsAt(index: number, state: GameState): string[] {
     return state.players.filter((p) => !p.bankrupt && (this.tokenPos.get(p.id) ?? p.position) === index).map((p) => p.id);
   }
@@ -822,8 +849,9 @@ export class Board3D implements BoardView {
       if (!tok) continue;
       const slots = this.slotsAt(p.position, state);
       const target = this.slotPosition(p.position, Math.max(0, slots.indexOf(p.id)), p.inJail);
+      tok.targetYaw = this.yawFor(p.position);
       if (animate) this.tweenTo(tok, target, 250, false);
-      else tok.group.position.copy(target);
+      else { tok.group.position.copy(target); tok.yaw = tok.targetYaw; tok.group.rotation.y = tok.yaw; }
     }
     this.updateRing();
   }
@@ -859,13 +887,6 @@ export class Board3D implements BoardView {
     this.tweens.push(timed(160, (t) => { const f = from + (facing - from) * t; tok.sprite.scale.x = 0.92 * f; }));
   }
 
-  private facingFor(dx: number, dz: number, tok: TokenObj): number {
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
-    const dot = dx * right.x + dz * right.z;
-    if (Math.abs(dot) < 0.15) return tok.facing;
-    return dot >= 0 ? 1 : -1;
-  }
-
   async moveToken(playerId: string, from: number, to: number, opts: { direct?: boolean; backward?: boolean }, state: GameState): Promise<void> {
     const tok = this.tokens.get(playerId);
     if (!tok) return;
@@ -875,7 +896,8 @@ export class Board3D implements BoardView {
       const slot = Math.max(0, this.slotsAt(to, state).indexOf(playerId));
       const target = this.slotPosition(to, slot, to === 10 ? true : !!player?.inJail);
       const d = target.clone().sub(tok.group.position);
-      this.setFacing(tok, this.facingFor(d.x, d.z, tok));
+      tok.targetYaw = this.yawFor(to);
+      this.setFacing(tok, this.facingFor(d.x, d.z, to, tok));
       // one big leap
       const startPos = tok.group.position.clone();
       this.busyTokens.add(tok);
@@ -898,7 +920,8 @@ export class Board3D implements BoardView {
       const slot = pos === to ? Math.max(0, this.slotsAt(pos, state).indexOf(playerId)) : 0;
       const target = this.slotPosition(pos, slot, false);
       const d = target.clone().sub(tok.group.position);
-      this.setFacing(tok, this.facingFor(d.x, d.z, tok));
+      tok.targetYaw = this.yawFor(pos);
+      this.setFacing(tok, this.facingFor(d.x, d.z, pos, tok));
       sfx.step();
       await this.tweenTo(tok, target, stepMs, true);
     }
@@ -1123,8 +1146,8 @@ export class Board3D implements BoardView {
     for (let i = this.tweens.length - 1; i >= 0; i--) if (!this.tweens[i].update(now, dt)) this.tweens.splice(i, 1);
     // Paper cutouts always face the camera (turning only around the vertical axis)
     for (const tok of this.tokens.values()) {
-      const p = tok.group.position;
-      tok.group.rotation.y = Math.atan2(this.camera.position.x - p.x, this.camera.position.z - p.z);
+      tok.yaw = approachAngle(tok.yaw, tok.targetYaw, dt, 140);
+      tok.group.rotation.y = tok.yaw;
       if (tok.squash > 0) tok.squash = Math.max(0, tok.squash - dt / 260);
       // idle pose only when no tween is driving this token (tweens call applyPose themselves)
       if (!this.busyTokens.has(tok)) tok.applyPose(0, 0, now);
