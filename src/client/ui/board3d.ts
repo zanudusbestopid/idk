@@ -15,8 +15,11 @@ import { faceNumbers, simulateThrow } from './dicephysics.js';
 import { cutoutFor } from './cutout.js';
 import { dur } from '../settings.js';
 
-const CORNER = 1.55;
-const HALF = (2 * CORNER + 9) / 2; // 6.05
+const UNIT = 1.45;   // width of a regular space (was 1): room for several standees side by side
+const CORNER = 2.1;
+const HALF = (2 * CORNER + 9 * UNIT) / 2; // 8.625
+const K = HALF / 6.05; // scale factor relative to the original board, for hand-tuned camera distances
+const TOKEN = 0.8;
 const TEX = 2048;
 const S = TEX / (2 * HALF); // canvas px per world unit
 const BOARD_Y = 0.12; // top surface height
@@ -28,13 +31,13 @@ interface Rect { x: number; z: number; w: number; d: number }
 /** World-space footprint of a space: x/z of the far-left corner, width along x, depth along z. */
 export function spaceRect(i: number): Rect {
   if (i === 0) return { x: HALF - CORNER, z: HALF - CORNER, w: CORNER, d: CORNER };
-  if (i < 10) return { x: HALF - CORNER - i, z: HALF - CORNER, w: 1, d: CORNER };
+  if (i < 10) return { x: HALF - CORNER - i * UNIT, z: HALF - CORNER, w: UNIT, d: CORNER };
   if (i === 10) return { x: -HALF, z: HALF - CORNER, w: CORNER, d: CORNER };
-  if (i < 20) return { x: -HALF, z: HALF - CORNER - (i - 10), w: CORNER, d: 1 };
+  if (i < 20) return { x: -HALF, z: HALF - CORNER - (i - 10) * UNIT, w: CORNER, d: UNIT };
   if (i === 20) return { x: -HALF, z: -HALF, w: CORNER, d: CORNER };
-  if (i < 30) return { x: -HALF + CORNER + (i - 21), z: -HALF, w: 1, d: CORNER };
+  if (i < 30) return { x: -HALF + CORNER + (i - 21) * UNIT, z: -HALF, w: UNIT, d: CORNER };
   if (i === 30) return { x: HALF - CORNER, z: -HALF, w: CORNER, d: CORNER };
-  return { x: HALF - CORNER, z: -HALF + CORNER + (i - 31), w: CORNER, d: 1 };
+  return { x: HALF - CORNER, z: -HALF + CORNER + (i - 31) * UNIT, w: CORNER, d: UNIT };
 }
 
 function indexAt(x: number, z: number): number | null {
@@ -67,7 +70,6 @@ function spaceCenter(i: number): [number, number] {
   return [r.x + r.w / 2, r.z + r.d / 2];
 }
 
-const SLOT_OFFSETS: [number, number][] = [[0, 0], [-0.3, 0.12], [0.3, 0.12], [-0.3, -0.22], [0.3, -0.22], [0, 0.34], [0, -0.4], [0.32, 0.38]];
 
 function svgImage(svg: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -182,9 +184,9 @@ class TokenObj {
   private faceMat: THREE.MeshBasicMaterial;
   constructor(material: THREE.MeshBasicMaterial) {
     this.faceMat = material;
-    this.sprite = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 0.92), material);
+    this.sprite = new THREE.Mesh(new THREE.PlaneGeometry(TOKEN, TOKEN), material);
     this.sprite.position.y = 0.47;
-    this.shadow = new THREE.Mesh(new THREE.CircleGeometry(0.32, 24), new THREE.MeshBasicMaterial({ color: 0x2b2118, transparent: true, opacity: 0.3, depthWrite: false }));
+    this.shadow = new THREE.Mesh(new THREE.CircleGeometry(0.28, 24), new THREE.MeshBasicMaterial({ color: 0x2b2118, transparent: true, opacity: 0.3, depthWrite: false }));
     this.shadow.rotation.x = -Math.PI / 2;
     this.shadow.position.y = 0.012;
     this.shadow.scale.set(1.25, 0.7, 1);
@@ -200,7 +202,7 @@ class TokenObj {
     this.faceMat.needsUpdate = true;
     const edge = new THREE.MeshLambertMaterial({ color: INK });
     const mesh = new THREE.Mesh(geometry, [this.faceMat, edge]);
-    mesh.scale.set(0.92, 0.92, 1);
+    mesh.scale.set(TOKEN, TOKEN, 1);
     mesh.position.y = 0; // geometry stands on y=0
     mesh.castShadow = true;
     mesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: texture, alphaTest: 0.5 });
@@ -218,8 +220,8 @@ class TokenObj {
     const sq = this.squash;
     const sy = breathe * (1 - sq * 0.22);
     const sx = (1 + sq * 0.18) * this.facing;
-    m.scale.set(0.92 * sx, 0.92 * sy, 1);
-    m.position.y = (this.sprite.geometry instanceof THREE.PlaneGeometry ? 0.47 : 0) + hop;
+    m.scale.set(TOKEN * sx, TOKEN * sy, 1);
+    m.position.y = (this.sprite.geometry instanceof THREE.PlaneGeometry ? TOKEN / 2 : 0) + hop;
     m.rotation.z = tilt + Math.sin(now / 900 + this.phase) * 0.015;
   }
   setBankrupt(b: boolean): void { this.faceMat.opacity = b ? 0.35 : 1; this.faceMat.transparent = true; this.faceMat.color.setScalar(b ? 0.55 : 1); }
@@ -304,7 +306,7 @@ export class Board3D implements BoardView {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.scene.background = new THREE.Color('#7d4d22');
-    this.scene.fog = new THREE.Fog('#7d4d22', 30, 60);
+    this.scene.fog = new THREE.Fog('#7d4d22', 30 * K, 60 * K);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
     this.camera.position.copy(this.camPos);
@@ -332,7 +334,7 @@ export class Board3D implements BoardView {
     sun.position.set(7, 15, 8);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
-    sun.shadow.camera.left = -9; sun.shadow.camera.right = 9; sun.shadow.camera.top = 9; sun.shadow.camera.bottom = -9;
+    sun.shadow.camera.left = -9 * K; sun.shadow.camera.right = 9 * K; sun.shadow.camera.top = 9 * K; sun.shadow.camera.bottom = -9 * K;
     sun.shadow.camera.near = 1; sun.shadow.camera.far = 40;
     sun.shadow.bias = -0.0008;
     this.scene.add(sun);
@@ -359,14 +361,14 @@ export class Board3D implements BoardView {
     this.scene.add(edge, body, top);
 
     // Decks
-    this.scene.add(this.deck('CHANCE', '#ffe1b3', ICONS.chance, -2.7, 0.2, -0.12), this.deck('COMMUNITY CHEST', '#dff1fa', ICONS.chest, 2.7, 0.2, 0.09));
+    this.scene.add(this.deck('CHANCE', '#ffe1b3', ICONS.chance, -2.7 * K, 0.2, -0.12), this.deck('COMMUNITY CHEST', '#dff1fa', ICONS.chest, 2.7 * K, 0.2, 0.09));
 
     // Highlights
     const mk = (color: number, opacity: number) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false })); m.rotation.x = -Math.PI / 2; m.position.y = BOARD_Y + 0.004; m.visible = false; this.scene.add(m); return m; };
     this.hover = mk(0x2f7fd6, 0.22);
     this.select = mk(0x2f7fd6, 0.35);
     this.flashMesh = mk(0xfff3a6, 0.7);
-    this.ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.55, 40), new THREE.MeshBasicMaterial({ color: 0xd9413a, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
+    this.ring = new THREE.Mesh(new THREE.RingGeometry(0.38, 0.5, 40), new THREE.MeshBasicMaterial({ color: 0xd9413a, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
     this.ring.rotation.x = -Math.PI / 2; this.ring.position.y = BOARD_Y + 0.006; this.ring.visible = false;
     this.scene.add(this.ring, this.dynamic);
 
@@ -479,8 +481,8 @@ export class Board3D implements BoardView {
     const cy = (r.z + r.d / 2 + HALF) * S;
     const angle = corner ? 0 : sideAngle(i);
     // local frame: width along the edge, depth toward the outer edge; inner edge at top
-    const w = (corner ? CORNER : 1) * S;
-    const d = (corner ? CORNER : CORNER) * S;
+    const w = (corner ? CORNER : UNIT) * S;
+    const d = CORNER * S;
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
@@ -592,21 +594,21 @@ export class Board3D implements BoardView {
     const t = ((now - this.cinStart) / 1000) % 42;
     const center = new THREE.Vector3(0, 0.1, 0.4);
     if (t < 16) { // slow low orbit
-      const a = 0.6 + t * 0.085, r = 12.5;
-      return { pos: new THREE.Vector3(Math.sin(a) * r, 4.6, Math.cos(a) * r + 0.4), look: center };
+      const a = 0.6 + t * 0.085, r = 12.5 * K;
+      return { pos: new THREE.Vector3(Math.sin(a) * r, 4.6 * K, Math.cos(a) * r + 0.4), look: center };
     }
     if (t < 26) { // glide along the near row, street level
       const u = easeInOut((t - 16) / 10);
-      const x = 5.6 - 11.2 * u;
-      return { pos: new THREE.Vector3(x, 1.9, 8.4), look: new THREE.Vector3(x - 1.2, 0.3, 4.6) };
+      const x = (5.6 - 11.2 * u) * K;
+      return { pos: new THREE.Vector3(x, 1.9, 8.4 * K), look: new THREE.Vector3(x - 1.2, 0.3, 4.6 * K) };
     }
     if (t < 34) { // push in over the middle
       const u = easeInOut((t - 26) / 8);
-      return { pos: new THREE.Vector3(-3.2 + 4.6 * u, 7.6 - 2.8 * u, 6.8 - 3.4 * u), look: new THREE.Vector3(0.3, 0.2, -0.2) };
+      return { pos: new THREE.Vector3((-3.2 + 4.6 * u) * K, (7.6 - 2.8 * u) * K, (6.8 - 3.4 * u) * K), look: new THREE.Vector3(0.3, 0.2, -0.2) };
     }
     // high sweep back around
-    const a = 3.9 + (t - 34) * 0.14, r = 14.5;
-    return { pos: new THREE.Vector3(Math.sin(a) * r, 8.5, Math.cos(a) * r + 0.4), look: center };
+    const a = 3.9 + (t - 34) * 0.14, r = 14.5 * K;
+    return { pos: new THREE.Vector3(Math.sin(a) * r, 8.5 * K, Math.cos(a) * r + 0.4), look: center };
   }
 
   /** Little bits of life for the title screen: tokens hop, dice get thrown now and then. */
@@ -810,16 +812,24 @@ export class Board3D implements BoardView {
     return g;
   }
 
+  /**
+   * Where the n-th standee on a space stands: two abreast along the edge, rows from the
+   * outer edge inward (a corner fits three abreast). Jailed tokens use the inner cell.
+   */
   private slotPosition(index: number, slot: number, jailed: boolean): THREE.Vector3 {
     const [cx, cz] = spaceCenter(index);
     const f = frame(index);
     const corner = index % 10 === 0;
-    const [ox, oy] = SLOT_OFFSETS[slot % SLOT_OFFSETS.length];
-    // push toward the outer edge so the band stays visible; jailed tokens sit in the inner cell
-    const depthShift = corner ? (jailed && index === 10 ? -0.35 : 0.05) : 0.22;
-    const alongShift = corner && jailed && index === 10 ? 0.35 : 0;
-    const x = cx + f.along[0] * (ox * 0.9 + alongShift) - f.inward[0] * (depthShift + oy * 0.5);
-    const z = cz + f.along[1] * (ox * 0.9 + alongShift) - f.inward[1] * (depthShift + oy * 0.5);
+    const cols = corner ? 3 : 2;
+    const pitch = TOKEN * 0.86;
+    const col = slot % cols, row = Math.floor(slot / cols);
+    const along = (col - (cols - 1) / 2) * pitch;
+    // depth: positive = toward the outer edge; front row sits near the outer edge, next rows step inward
+    let depth = (corner ? 0.55 : 0.5) - row * 0.42;
+    let alongShift = 0;
+    if (corner && index === 10) { depth = jailed ? -0.45 : 0.55; alongShift = jailed ? 0.45 : 0; }
+    const x = cx + f.along[0] * (along + alongShift) - f.inward[0] * depth;
+    const z = cz + f.along[1] * (along + alongShift) - f.inward[1] * depth;
     return new THREE.Vector3(x, BOARD_Y, z);
   }
 
@@ -884,7 +894,7 @@ export class Board3D implements BoardView {
     if (tok.facing === facing) return;
     tok.facing = facing;
     const from = -facing;
-    this.tweens.push(timed(160, (t) => { const f = from + (facing - from) * t; tok.sprite.scale.x = 0.92 * f; }));
+    this.tweens.push(timed(160, (t) => { const f = from + (facing - from) * t; tok.sprite.scale.x = TOKEN * f; }));
   }
 
   async moveToken(playerId: string, from: number, to: number, opts: { direct?: boolean; backward?: boolean }, state: GameState): Promise<void> {
@@ -959,7 +969,7 @@ export class Board3D implements BoardView {
     const dir = from2.clone().normalize(); // center → thrower
     const side = new THREE.Vector2(-dir.y, dir.x);
     const rnd = (a: number, b: number) => a + Math.random() * (b - a);
-    const launch = dir.clone().multiplyScalar(3.7);
+    const launch = dir.clone().multiplyScalar(3.7 * K);
     const speed = rnd(3.2, 4.6);
     const start = [0, 1].map((i) => { const o = side.clone().multiplyScalar(i === 0 ? -0.36 : 0.36); return [launch.x + o.x, BOARD_Y + rnd(1.5, 2.1), launch.y + o.y] as [number, number, number]; });
     const velocity = [0, 1].map(() => { const lat = side.clone().multiplyScalar(rnd(-1.2, 1.2)); return [-dir.x * speed + lat.x, rnd(1.2, 2.4), -dir.y * speed + lat.y] as [number, number, number]; });
@@ -967,8 +977,8 @@ export class Board3D implements BoardView {
     const half = 0.31;
     const result = simulateThrow({
       start, velocity, angular, groundY: BOARD_Y, halfSize: half,
-      bounds: { minX: -4.1, maxX: 4.1, minZ: -4.1, maxZ: 4.1 },
-      obstacles: [{ x: -2.7, y: BOARD_Y + 0.045, z: 0.2, w: 1.5, h: 0.09, d: 1.0, rotY: -0.12 }, { x: 2.7, y: BOARD_Y + 0.045, z: 0.2, w: 1.5, h: 0.09, d: 1.0, rotY: 0.09 }],
+      bounds: { minX: -4.1 * K, maxX: 4.1 * K, minZ: -4.1 * K, maxZ: 4.1 * K },
+      obstacles: [{ x: -2.7 * K, y: BOARD_Y + 0.045, z: 0.2, w: 1.5, h: 0.09, d: 1.0, rotY: -0.12 }, { x: 2.7 * K, y: BOARD_Y + 0.045, z: 0.2, w: 1.5, h: 0.09, d: 1.0, rotY: 0.09 }],
     });
     // Pips: the face that lands on top shows the rolled value.
     if (this.dieTextures.length === 6) {
@@ -1017,7 +1027,7 @@ export class Board3D implements BoardView {
   }
 
   drawCard(deck: 'chance' | 'chest', text?: string): void {
-    const x = deck === 'chance' ? -2.7 : 2.7;
+    const x = (deck === 'chance' ? -2.7 : 2.7) * K;
     const color = deck === 'chance' ? '#ffe1b3' : '#dff1fa';
     // Card face: header + wrapped text
     const c = document.createElement('canvas'); c.width = 512; c.height = 336;
@@ -1072,7 +1082,7 @@ export class Board3D implements BoardView {
     this.victoryStart = performance.now();
     this.setMode('victory');
     const p = tok.group.position;
-    const spot = new THREE.SpotLight(0xfff0c0, 60, 14, Math.PI / 8, 0.45, 1.3);
+    const spot = new THREE.SpotLight(0xfff0c0, 60, 14 * K, Math.PI / 8, 0.45, 1.3);
     spot.position.set(p.x + 1.5, BOARD_Y + 6, p.z + 1.5);
     spot.target.position.set(p.x, BOARD_Y, p.z);
     spot.castShadow = false;

@@ -8,8 +8,8 @@ export interface DemoPlayer { id: string; name: string; token: string; color: st
 export function demoState(players: DemoPlayer[], config: Partial<GameConfig> = {}): GameState {
   const list = players.length >= 2 ? players : [...players, { id: 'demo-b', name: 'Otto', token: 'hat', color: '#8e5bc4' }, { id: 'demo-c', name: 'Penny', token: 'boat', color: '#2f6fd6' }].slice(0, Math.max(2, players.length));
   const st = createGame({ ...DEFAULT_CONFIG, ...config }, list, 12345);
-  const spots = [0, 6, 11, 16, 24, 29, 34, 37];
-  st.players.forEach((p, i) => { p.position = spots[(i * 3) % spots.length]; p.connected = true; });
+  const spots = [0, 0, 6, 16, 24, 0, 34, 37];
+  st.players.forEach((p, i) => { p.position = spots[i % spots.length]; p.connected = true; });
   const ids = st.players.map((p) => p.id);
   const own = (idxs: number[], owner: string, houses: number) => { for (const i of idxs) st.properties[i] = { owner, houses, mortgaged: false }; };
   own([1, 3], ids[1 % ids.length], 3);
