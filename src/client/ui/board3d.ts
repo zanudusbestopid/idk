@@ -183,7 +183,6 @@ class TokenObj {
   phase = Math.random() * 10;
   walkStep = 0;
   squash = 0; // 0..1 landing squash amount, decays
-  aspect = 1; // width / height of the character
   contentScale = 1; // enlarges characters that only fill part of their cell (small sprites)
   private faceMat: THREE.MeshBasicMaterial;
   private frames: Partial<Record<FrameName, { geometry: THREE.ExtrudeGeometry; texture: THREE.CanvasTexture }>> = {};
@@ -201,7 +200,6 @@ class TokenObj {
   }
   /** Swap the flat plane for an extruded pixel-art standee with animation frames. */
   useCharacter(ch: Character): void {
-    this.aspect = ch.w / ch.h;
     this.contentScale = contentScaleFor(ch.frames.idle1);
     for (const name of Object.keys(ch.frames) as FrameName[]) this.frames[name] = pixelCutout(ch.frames[name]);
     const first = this.frames.idle1 ?? Object.values(this.frames)[0]!;
@@ -252,8 +250,9 @@ class TokenObj {
     const sq = this.squash;
     const sy = breathe * (1 - sq * 0.22);
     const sx = (1 + sq * 0.18) * this.facing;
-    const w = isSprite ? TOKEN * this.aspect * SPRITE_SCALE * this.contentScale : TOKEN;
+    // The pixel cutout geometry is already w/h wide for a height of 1, so it scales uniformly (square pixels).
     const hgt = isSprite ? TOKEN * SPRITE_SCALE * this.contentScale : TOKEN;
+    const w = isSprite ? hgt : TOKEN;
     m.scale.set(w * sx, hgt * sy, 1);
     m.position.y = (isSprite ? 0 : TOKEN / 2) + hop;
     m.rotation.z = tilt + (isSprite ? 0 : Math.sin(now / 900 + this.phase) * 0.015);
@@ -947,7 +946,7 @@ export class Board3D implements BoardView {
     if (tok.facing === facing) return;
     tok.facing = facing;
     const from = -facing;
-    const w = tok.frame !== null ? TOKEN * tok.aspect * SPRITE_SCALE * tok.contentScale : TOKEN;
+    const w = tok.frame !== null ? TOKEN * SPRITE_SCALE * tok.contentScale : TOKEN;
     this.tweens.push(timed(160, (t) => { const f = from + (facing - from) * t; tok.sprite.scale.x = w * f; }));
   }
 
