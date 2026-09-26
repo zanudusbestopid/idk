@@ -41,16 +41,39 @@ export function drawSprite(ctx: CanvasRenderingContext2D, name: string, dx: numb
   return true;
 }
 
-/** Fill a rectangle with a sprite repeated at `scale` pixels per sprite pixel (clipped to the rect). */
+const stripCache = new Map<string, HTMLCanvasElement>();
+
+/**
+ * Fill a rectangle with a sprite repeated at about `scale` pixels per sprite pixel. A whole
+ * number of tiles is fitted (each stretched slightly) and the strip is built once as a single
+ * image, so there are no seams between tiles and no tile is cut off at the end.
+ */
 export function tileSprite(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, w: number, h: number, scale: number): boolean {
   const s = sprite(name);
-  if (!s || !atlas) return false;
-  ctx.save();
-  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+  if (!s || !atlas || w <= 0 || h <= 0) return false;
+  const nx = Math.max(1, Math.round(w / (s.w * scale)));
+  const ny = Math.max(1, Math.round(h / (s.h * scale)));
+  const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h));
+  const key = `${name}:${W}x${H}:${nx}x${ny}`;
+  let strip = stripCache.get(key);
+  if (!strip) {
+    strip = document.createElement('canvas');
+    strip.width = W; strip.height = H;
+    const sc = strip.getContext('2d')!;
+    sc.imageSmoothingEnabled = false;
+    for (let j = 0; j < ny; j++) {
+      const y0 = Math.round(j * H / ny), y1 = Math.round((j + 1) * H / ny);
+      for (let i = 0; i < nx; i++) {
+        const x0 = Math.round(i * W / nx), x1 = Math.round((i + 1) * W / nx);
+        sc.drawImage(atlas, s.x, s.y, s.w, s.h, x0, y0, x1 - x0, y1 - y0);
+      }
+    }
+    stripCache.set(key, strip);
+  }
+  const prev = ctx.imageSmoothingEnabled;
   ctx.imageSmoothingEnabled = false;
-  const tw = s.w * scale, th = s.h * scale;
-  for (let yy = y; yy < y + h; yy += th) for (let xx = x; xx < x + w; xx += tw) ctx.drawImage(atlas, s.x, s.y, s.w, s.h, xx, yy, tw, th);
-  ctx.restore();
+  ctx.drawImage(strip, x, y, w, h);
+  ctx.imageSmoothingEnabled = prev;
   return true;
 }
 

@@ -447,10 +447,10 @@ export class Board3D implements BoardView {
     if (themed()) this.addScenery();
 
     // Board: white sticker edge, ink body, paper top
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(2 * HALF + 0.5, 0.05, 2 * HALF + 0.5), new THREE.MeshLambertMaterial({ color: PAPER }));
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(2 * HALF + 0.5, 0.05, 2 * HALF + 0.5), new THREE.MeshLambertMaterial({ color: themed() ? '#5a3a1e' : PAPER }));
     edge.position.y = 0.025; edge.castShadow = true; edge.receiveShadow = true;
     edge.rotation.y = -0.006;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(2 * HALF + 0.16, BOARD_Y - 0.05, 2 * HALF + 0.16), new THREE.MeshLambertMaterial({ color: INK }));
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2 * HALF + 0.16, BOARD_Y - 0.05, 2 * HALF + 0.16), new THREE.MeshLambertMaterial({ color: themed() ? '#3b2412' : INK }));
     body.position.y = 0.05 + (BOARD_Y - 0.05) / 2; body.castShadow = true;
     this.boardCanvas = document.createElement('canvas');
     this.boardCanvas.width = TEX; this.boardCanvas.height = TEX;
@@ -709,23 +709,24 @@ export class Board3D implements BoardView {
       ctx.save();
       ctx.beginPath(); ctx.rect(left + b, top + b, iw - 2 * b, ih - 2 * b); ctx.clip();
       ctx.rotate(i === 0 ? -Math.PI / 4 : i === 10 ? Math.PI / 4 : i === 20 ? 3 * Math.PI / 4 : -3 * Math.PI / 4);
-      const maxW = iw - 2 * b - 30;
+      // The panel is a square seen along its diagonal: content must satisfy |x| + |y| < ~160 to stay inside.
+      const maxW = 150;
       if (space.type === 'go') {
-        const yy = label(nameOf(), 34, -108, maxW);
-        ctx.font = `13px ${pixelFont()}`; ctx.fillText('COLLECT 200', 0, yy + 2);
-        draw('castle_small', -52, 8, 96 * 1.1, 80 * 1.1);
-        draw('flag_pole', -92, 2, 20, 80); draw('flag_ball', -93, -10, 22, 22); draw('goal_flag', -80, 4, 26, 26);
+        const yy = label(nameOf(), 30, -88, maxW);
+        ctx.font = `12px ${pixelFont()}`; ctx.fillText('COLLECT 200', 0, yy);
+        draw('castle_small', -36, 14, 96 * 0.9, 80 * 0.9);
+        draw('flag_pole', -66, 12, 16, 66); draw('flag_ball', -68, 2, 20, 20); draw('goal_flag', -56, 14, 22, 22);
       } else if (space.type === 'jail') {
-        const yy = label(nameOf(), 20, -112, maxW);
-        ctx.font = `11px ${pixelFont()}`; ctx.fillText(T.justVisiting.toUpperCase(), 0, yy + 2);
-        draw('chain_fence', -60, -10, 96 * 1.25, 128 * 0.95);
+        const yy = label(nameOf(), 18, -90, maxW);
+        ctx.font = `10px ${pixelFont()}`; ctx.fillText(T.justVisiting.toUpperCase(), 0, yy);
+        draw('chain_fence', -42, -4, 96 * 0.88, 128 * 0.72);
       } else if (space.type === 'freeparking') {
-        label(nameOf(), 22, -104, maxW);
-        draw('cloud_big', -96, -20, 48 * 2.6, 32 * 2.6); draw('cloud_small', 4, 50, 48 * 2, 16 * 2);
-        for (let k = 0; k < 4; k++) draw(k % 2 ? 'coin' : 'coin3', -62 + k * 40, 8, 30, 30);
+        label(nameOf(), 20, -88, maxW);
+        draw('cloud_big', -60, -26, 48 * 2.4, 32 * 2.4); draw('cloud_small', -28, 56, 48 * 1.6, 16 * 1.6);
+        for (let k = 0; k < 3; k++) draw(k % 2 ? 'coin' : 'coin3', -42 + k * 32, 20, 26, 26);
       } else {
-        label(nameOf(), 20, -112, maxW);
-        draw('cannon', -80, -14, 16 * 3, 48 * 3); draw('hard_block_gray', -6, 44, 56, 56); draw('hard_block_gray', 50, 44, 56, 56); draw('hard_block_gray', 22, -12, 56, 56);
+        label(nameOf(), 18, -92, maxW);
+        draw('cannon', -58, -18, 16 * 2.6, 48 * 2.6); draw('hard_block_gray', -8, 30, 48, 48); draw('hard_block_gray', 40, 30, 48, 48); draw('hard_block_gray', 16, -18, 48, 48);
       }
       ctx.restore();
       ctx.restore();
