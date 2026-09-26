@@ -64,6 +64,7 @@ export interface BoardView {
   highlight(index: number | null): void;
   showDice(dice: [number, number], animate: boolean): Promise<void>;
   drawCard?(deck: 'chance' | 'chest'): void;
+  setSpaceClick?(fn: (index: number) => void): void;
   destroy?(): void;
 }
 

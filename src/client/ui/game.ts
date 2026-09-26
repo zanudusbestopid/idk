@@ -23,6 +23,7 @@ export interface GameHandlers {
 export interface GameScreenOptions {
   chat?: boolean;            // show the chat box (default true)
   board3d?: boolean;         // start with the 3D board (default true when WebGL works)
+  board?: BoardView;         // adopt an already-built board (e.g. the title screen's scene) for a seamless transition
   onIdle?: () => void;       // called whenever animations have drained and the screen shows the latest state
   restartLabel?: string;     // label of the host's button on the standings dialog
   leaveText?: string;        // confirmation text for the Leave button
@@ -69,6 +70,7 @@ export class GameScreen {
     clear(root);
     this.mode3d = (opts.board3d ?? true) && webglAvailable() && loadBoardPref() !== '2d';
     this.board = this.makeBoard();
+    if (this.mode3d && loadBoardPref() === '2d' && !(opts.board3d === false)) { /* adopted 3D board wins over the stored preference */ }
     this.boardHost.appendChild(this.board.wrap);
     const chatForm = h('form', { class: 'chatform', onSubmit: (e: Event) => { e.preventDefault(); const t = this.chatInput.value.trim(); if (t) { handlers.chat(t); this.chatInput.value = ''; } } },
       this.chatInput, h('button', { class: 'btn btn--sm', type: 'submit' }, 'Send'));
@@ -91,6 +93,7 @@ export class GameScreen {
 
   private locked: HTMLButtonElement[] = [];
   private makeBoard(): BoardView {
+    if (this.opts.board) { const b = this.opts.board; this.opts.board = undefined; this.mode3d = b instanceof Board3D; b.setSpaceClick?.((i) => this.openDeed(i)); return b; }
     if (this.mode3d) {
       try { return new Board3D((i) => this.openDeed(i)); } catch (e) { console.warn('3D board unavailable', e); this.mode3d = false; }
     }
@@ -488,7 +491,7 @@ function describeEvent(ev: GameEvent, state: GameState): (string | HTMLElement)[
   }
 }
 
-function loadBoardPref(): '2d' | '3d' | null {
+export function loadBoardPref(): '2d' | '3d' | null {
   try { const v = localStorage.getItem('pt.board'); return v === '2d' || v === '3d' ? v : null; } catch { return null; }
 }
 function saveBoardPref(v: '2d' | '3d'): void {

@@ -13,7 +13,9 @@ or switch to the flat 2D board with the button in the log panel. Two ways to pla
 
 ## Single player
 
-Download `release/paper-tycoon-solo.html` and double-click it. Pick your token, choose how many
+Download `release/paper-tycoon-solo.html` and double-click it. The title screen is the live 3D board
+with a slow cinematic camera; the tokens you pick appear on it, and Start flies the camera into the
+game. Pick your token, choose how many
 computer players you face, set the house rules, and start. The computer players buy sensibly,
 bid in auctions, build on their monopolies, raise cash when they owe money, and occasionally
 offer you a trade for the last street of a set they are collecting.

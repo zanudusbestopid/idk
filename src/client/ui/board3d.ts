@@ -208,7 +208,12 @@ export class Board3D implements BoardView {
   private pointerDown: { x: number; y: number } | null = null;
   private ro: ResizeObserver;
   // Camera director
-  private camMode: 'follow' | 'overview' | 'top' | 'free' = 'follow';
+  private camMode: 'follow' | 'overview' | 'top' | 'free' | 'cinematic' = 'follow';
+  private cinStart = performance.now();
+  private cameraPlaced = false;
+  private flyInUntil = 0;
+  private ambientTimer: number | null = null;
+  private ambientTick = 0;
   private followId: string | null = null;
   private followZoom = 1;
   private camPos = new THREE.Vector3(0, 13, 15);
@@ -478,8 +483,11 @@ export class Board3D implements BoardView {
       void svgTexture(tokenSvg(p.token), 512).then((tex) => { mat.map = tex; mat.visible = true; mat.needsUpdate = true; });
     }
     this.resize();
-    const ov = this.overviewPose();
-    this.camPos.copy(ov.pos); this.camLook.copy(ov.look);
+    if (!this.cameraPlaced) {
+      const ov = this.camMode === 'cinematic' ? this.cinematicPose(performance.now()) : this.overviewPose();
+      this.camPos.copy(ov.pos); this.camLook.copy(ov.look);
+      this.cameraPlaced = true;
+    }
     this.followId = state.players[state.currentPlayer]?.id ?? null;
     this.updateStatic(state);
     this.placeTokens(state, false);
@@ -495,18 +503,67 @@ export class Board3D implements BoardView {
     this.camera.updateProjectionMatrix();
   }
 
+  setSpaceClick(fn: (index: number) => void): void { this.onSpaceClick = fn; }
+
   // ---------- camera director ----------
 
-  setMode(mode: 'follow' | 'overview' | 'top' | 'free'): void {
+  setMode(mode: 'follow' | 'overview' | 'top' | 'free' | 'cinematic'): void {
     if (mode !== 'free' && this.camMode === 'free') {
       // resume from wherever the viewer left the camera
       this.camPos.copy(this.camera.position);
       this.camLook.copy(this.controls.target);
     }
+    if (this.camMode === 'cinematic' && mode !== 'cinematic') {
+      this.stopAmbient();
+      this.flyInUntil = performance.now() + 2600; // long sweeping move from the title camera into the game
+    }
+    if (mode === 'cinematic') { this.cinStart = performance.now(); this.startAmbient(); }
     this.camMode = mode;
+    this.wrap.classList.toggle('is-cinematic', mode === 'cinematic');
     this.controls.enableZoom = mode === 'free';
     for (const [m, b] of this.camButtons) b.classList.toggle('btn--blue', m === mode);
     this.updateCamLabel();
+  }
+
+  /** Title-screen camera: a loop of slow shots around the board. */
+  private cinematicPose(now: number): { pos: THREE.Vector3; look: THREE.Vector3 } {
+    const t = ((now - this.cinStart) / 1000) % 42;
+    const center = new THREE.Vector3(0, 0.1, 0.4);
+    if (t < 16) { // slow low orbit
+      const a = 0.6 + t * 0.085, r = 12.5;
+      return { pos: new THREE.Vector3(Math.sin(a) * r, 4.6, Math.cos(a) * r + 0.4), look: center };
+    }
+    if (t < 26) { // glide along the near row, street level
+      const u = easeInOut((t - 16) / 10);
+      const x = 5.6 - 11.2 * u;
+      return { pos: new THREE.Vector3(x, 1.9, 8.4), look: new THREE.Vector3(x - 1.2, 0.3, 4.6) };
+    }
+    if (t < 34) { // push in over the middle
+      const u = easeInOut((t - 26) / 8);
+      return { pos: new THREE.Vector3(-3.2 + 4.6 * u, 7.6 - 2.8 * u, 6.8 - 3.4 * u), look: new THREE.Vector3(0.3, 0.2, -0.2) };
+    }
+    // high sweep back around
+    const a = 3.9 + (t - 34) * 0.14, r = 14.5;
+    return { pos: new THREE.Vector3(Math.sin(a) * r, 8.5, Math.cos(a) * r + 0.4), look: center };
+  }
+
+  /** Little bits of life for the title screen: tokens hop, dice get thrown now and then. */
+  private startAmbient(): void {
+    this.stopAmbient();
+    this.ambientTimer = window.setInterval(() => {
+      if (this.destroyed || this.camMode !== 'cinematic') return;
+      this.ambientTick++;
+      const toks = [...this.tokens.values()];
+      if (toks.length && this.ambientTick % 4 !== 0) {
+        const tok = toks[Math.floor(Math.random() * toks.length)];
+        void this.tweenTo(tok, tok.group.position.clone(), 320, true);
+      }
+      if (this.ambientTick % 4 === 0) void this.showDice([1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)] as [number, number], true);
+    }, 2400);
+  }
+
+  private stopAmbient(): void {
+    if (this.ambientTimer !== null) { clearInterval(this.ambientTimer); this.ambientTimer = null; }
   }
 
   private updateCamLabel(): void {
@@ -557,6 +614,7 @@ export class Board3D implements BoardView {
   }
 
   private desiredPose(now: number, dt: number): { pos: THREE.Vector3; look: THREE.Vector3; tau: number } {
+    if (this.camMode === 'cinematic') return { ...this.cinematicPose(now), tau: 1.3 };
     if (this.camMode === 'overview') return { ...this.overviewPose(), tau: 0.6 };
     if (this.camMode === 'top') return { ...this.topPose(), tau: 0.6 };
     // follow
@@ -582,7 +640,10 @@ export class Board3D implements BoardView {
 
   private updateCamera(now: number, dt: number): void {
     if (this.camMode === 'free') { this.controls.update(); return; }
-    const { pos, look, tau } = this.desiredPose(now, dt);
+    const desired = this.desiredPose(now, dt);
+    const { pos, look } = desired;
+    let tau = desired.tau;
+    if (now < this.flyInUntil) tau = Math.max(tau, 0.35 + ((this.flyInUntil - now) / 2600) * 1.1);
     const k = 1 - Math.exp(-dt / (tau * 1000));
     this.camPos.lerp(pos, k);
     this.camLook.lerp(look, k);
@@ -915,7 +976,7 @@ export class Board3D implements BoardView {
     if (this.destroyed) return;
     this.raf = requestAnimationFrame(this.loop);
     const now = performance.now();
-    const dt = Math.min(50, now - this.last);
+    const dt = Math.min(400, now - this.last);
     this.last = now;
     this.updateCamera(now, dt);
     for (let i = this.tweens.length - 1; i >= 0; i--) if (!this.tweens[i].update(now, dt)) this.tweens.splice(i, 1);
@@ -931,6 +992,7 @@ export class Board3D implements BoardView {
 
   destroy(): void {
     this.destroyed = true;
+    this.stopAmbient();
     cancelAnimationFrame(this.raf);
     this.ro.disconnect();
     this.controls.dispose();

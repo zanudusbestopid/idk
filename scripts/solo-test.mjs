@@ -21,6 +21,7 @@ await page.waitForSelector('#setup-start');
 if (SHOTS) await page.screenshot({ path: 'shots/solo-setup.png' });
 await page.fill('#setup-name', 'Ava');
 await page.click('.token-pick[title="Rubber Duck"]');
+await page.click('.rules-fold summary');
 await page.click('.rule:has-text("Free Parking jackpot") .switch');
 await page.click('#setup-start');
 await page.waitForSelector('.game .board, .game .board3d-wrap');

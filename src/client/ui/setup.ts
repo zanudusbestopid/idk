@@ -10,8 +10,11 @@ import { rulesPanel } from './rules.js';
 export interface SetupHandlers {
   onStart(setup: SoloSetup): void;
   onResume(saved: SavedGame): void;
+  /** Called with the current choices whenever they change, so the scene behind the menu can show them. */
+  onPreview?(setup: SoloSetup): void;
 }
 
+/** Title screen: hero title on the left, the setup card on the right, both floating over the 3D scene. */
 export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: SavedGame | null, previous?: SoloSetup): void {
   clear(root);
   const profile = loadProfile();
@@ -20,6 +23,7 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
     : { name: profile.name, token: TOKEN_LIST.some((t) => t.id === profile.token) ? profile.token : 'hat', bots: [], config: { ...DEFAULT_CONFIG } };
   let botCount = previous ? previous.bots.length : 3;
   let shuffle = 0;
+  const preview = () => handlers.onPreview?.({ ...setup, name: nameInput.value.trim() || 'You' });
 
   const nameInput = h('input', { class: 'input', placeholder: 'Your name', maxLength: 16, value: setup.name, autocomplete: 'off', id: 'setup-name' }) as HTMLInputElement;
   nameInput.addEventListener('input', () => { setup.name = nameInput.value; });
@@ -48,17 +52,17 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
     for (const b of setup.bots) {
       botsEl.appendChild(h('div', { class: 'bot paper paper--flat' }, h('span', { html: tokenSvg(b.token) }), h('span', { class: 'bname' }, b.name)));
     }
+    preview();
   }
   renderTokens(); renderCount(); renderBots();
 
-  const rules = h('div', { class: 'rules paper paper--flat paper--tilt-r' }, h('h2', null, 'House rules'));
   const rulesHost = h('div');
-  rules.appendChild(rulesHost);
   function renderRules(): void {
     clear(rulesHost);
     rulesHost.appendChild(rulesPanel({ ...DEFAULT_CONFIG, ...setup.config } as GameConfig, true, (patch) => { Object.assign(setup.config, patch); renderRules(); }));
   }
   renderRules();
+  const rules = h('details', { class: 'rules-fold' }, h('summary', null, 'House rules ', h('span', { class: 'muted small' }, '(auctions, Free Parking, starting cash…)')), rulesHost);
 
   const startBtn = h('button', { class: 'btn btn--primary btn--lg', type: 'button', id: 'setup-start', onClick: () => {
     setup.name = nameInput.value.trim() || 'You';
@@ -67,17 +71,20 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
   } }, 'Start game');
 
   const resume = saved ? h('div', { class: 'resume paper paper--flat' },
-    h('div', null, h('b', null, 'You have a game in progress'), h('div', { class: 'muted small' }, `Turn ${saved.state.turnNumber}, ${saved.state.players.filter((p) => !p.bankrupt).length} players left.`)),
+    h('div', null, h('b', null, 'Game in progress'), h('div', { class: 'muted small' }, `Turn ${saved.state.turnNumber}, ${saved.state.players.filter((p) => !p.bankrupt).length} players left.`)),
     h('button', { class: 'btn btn--good', type: 'button', id: 'setup-resume', onClick: () => handlers.onResume(saved) }, 'Resume')) : null;
 
-  const left = h('div', null,
+  const hero = h('div', { class: 'title-hero' },
     h('h1', { class: 'title-art' }, h('span', null, 'PAPER'), h('span', null, 'TYCOON')),
-    h('p', { class: 'subtitle hand' }, 'Buy streets, build houses, bankrupt the computer. All out of paper.'),
-    resume,
-    h('div', { class: 'field' }, h('label', { for: 'setup-name' }, 'Your name'), nameInput),
-    h('div', { class: 'field' }, h('label', null, 'Your token'), tokenGrid),
-    h('div', { class: 'field' }, h('label', null, 'Computer opponents'), countRow, botsEl),
-    h('div', { style: { textAlign: 'center', marginTop: '10px' } }, startBtn),
-  );
-  root.appendChild(h('div', { class: 'screen-center' }, h('div', { class: 'setup paper' }, left, rules)));
+    h('p', { class: 'tagline hand' }, 'Buy streets, build houses, bankrupt the computer. All out of paper.'),
+    resume);
+  const fields = [
+    h('div', { class: 'field', style: { '--i': '0' } as unknown as Record<string, string> }, h('label', { for: 'setup-name' }, 'Your name'), nameInput),
+    h('div', { class: 'field', style: { '--i': '1' } as unknown as Record<string, string> }, h('label', null, 'Your token'), tokenGrid),
+    h('div', { class: 'field', style: { '--i': '2' } as unknown as Record<string, string> }, h('label', null, 'Computer opponents'), countRow, botsEl),
+    h('div', { class: 'field', style: { '--i': '3' } as unknown as Record<string, string> }, rules),
+    h('div', { class: 'field field--start', style: { '--i': '4' } as unknown as Record<string, string> }, startBtn),
+  ];
+  const card = h('div', { class: 'setup-card paper' }, ...fields);
+  root.append(hero, card);
 }
