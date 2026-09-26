@@ -1,16 +1,15 @@
-// In-game art editor: cut sprites out of the source sheets (grid snapping, gutter detection and a
-// transparency key), give them to board spaces, art slots and scenery props, and watch the 3D board
-// update. Choices live in localStorage (overrides.ts) and can be exported/imported as JSON.
-import { h, clear, toast } from '../dom.js';
+// In-game art editor: cut sprites out of the source sheets, browse every sprite, give art to board
+// spaces, named slots and scenery props, and watch the 3D board update. Choices live in
+// localStorage (overrides.ts) and can be exported/imported as JSON. Every change can be undone.
+import { h, append, clear, toast } from '../dom.js';
 import { THEME, deckName } from '../theme.js';
 import { packImage, sheetSources, spriteCanvas, spriteNames } from '../art/pack.js';
-import { art, exportArt, importArt, isOverridden, removeArtSprite, resetArt, setArtSprite, setProps, setSpaceArt, type PropDef, type SpaceArt } from '../art/overrides.js';
-import type { Board3D } from './board3d.js';
+import { applyArt, art, exportArt, importArt, isOverridden, removeArtSprite, resetArt, saveArt, setArtSprite, setProps, setSpaceArt, type PropDef, type SpaceArt } from '../art/overrides.js';
+import { BOARD_HALF, propImage, type Board3D } from './board3d.js';
+import { SheetView, decodeImage, sheetImage, type Cut, type SheetImage } from './sheetview.js';
 
-interface Source { name: string; img: CanvasImageSource; w: number; h: number; px: Uint8ClampedArray; grid: boolean }
-interface Rect { x: number; y: number; w: number; h: number }
-type Snap = 'auto' | 'grid' | 'off';
-type Tab = 'sheet' | 'spaces' | 'scenery' | 'slots';
+type Tab = 'sheet' | 'sprites' | 'spaces' | 'scenery' | 'slots';
+interface Current { kind: 'cut' | 'sprite'; name: string; canvas: HTMLCanvasElement; info: string }
 
 /** Named sprites the board draws directly, so replacing them re-skins that part of the game. */
 const SLOTS: { name: string; what: string }[] = [
@@ -38,31 +37,12 @@ const SLOTS: { name: string; what: string }[] = [
   { name: 'castle_small', what: 'Small castle' },
 ];
 const ASSEMBLED = ['bush:2', 'bush:3', 'bush:4', 'pipe:2', 'pipe:3', 'pipe:4'];
+const SIDES = ['bottom', 'left', 'top', 'right'];
+const WIDTH_KEY = 'pt.art.width';
 
-function checker(): string {
-  return 'repeating-conic-gradient(#d9d0bd 0 25%, #f2ebdc 0 50%) 0 0 / 16px 16px';
-}
-
-function decode(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('bad image'));
-    img.src = url;
-  });
-}
-
-function makeSource(name: string, img: CanvasImageSource, w: number, h: number, grid = true): Source {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const ctx = c.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(img, 0, 0);
-  return { name, img: c, w, h, px: ctx.getImageData(0, 0, w, h).data, grid };
-}
-
-function thumb(canvas: HTMLCanvasElement | null, max = 64): HTMLElement {
+function thumb(canvas: HTMLCanvasElement | null, max = 48): HTMLElement {
   const el = h('span', { class: 'arted__thumb' });
-  if (canvas) {
+  if (canvas && canvas.width && canvas.height) {
     const s = Math.max(1, Math.min(4, Math.floor(max / Math.max(canvas.width, canvas.height))));
     const c = document.createElement('canvas');
     c.width = canvas.width * s; c.height = canvas.height * s;
@@ -82,533 +62,614 @@ function num(value: number, step: number, onChange: (v: number) => void, width =
 }
 
 function select(options: { value: string; label: string }[], value: string, onChange: (v: string) => void): HTMLSelectElement {
-  const s = h('select', null, ...options.map((o) => h('option', { value: o.value, selected: o.value === value }, o.label)));
+  const s = h('select', null, ...options.map((o) => h('option', { value: o.value }, o.label)));
   s.value = value;
   s.addEventListener('change', () => onChange(s.value));
   return s;
 }
 
+function sideOfSpace(i: number): string { return SIDES[Math.floor(i / 10)]; }
+
 /** Open the editor over the current screen. Returns a handle to close it programmatically. */
 export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; onClose: () => void }): { close(): void } {
   const board = opts.board;
 
-  // ---------- editor state ----------
-  const sources: Source[] = [];
-  let source: Source | null = null;
-  let zoom = 3;
-  let pitch = 17, tile = 16, ox = 1, oy = 1;
-  let snap: Snap = 'auto';
-  let degap = true;
-  let trim = false;
-  let keys = new Set<number>();
-  let picking = false;
-  let sel: Rect | null = null;
-  let drag: { x: number; y: number } | null = null;
-  let cut: HTMLCanvasElement | null = null;
+  // ---------- state ----------
   let tab: Tab = 'sheet';
+  let current: Current | null = null;
+  const history: string[] = [];
+  const redo: string[] = [];
   let spaceIdx = 1;
-  let props: PropDef[] = (art.props ?? board?.defaultProps() ?? []).map((p) => ({ ...p }));
+  let props: PropDef[] = freshProps();
   let propId: string | null = props[0]?.id ?? null;
-  let placing = false;
+  let moveMode = false;
+  let tableDrag = false;
+  let filter = '';
+  let mapRange = 32;
+  const recent: string[] = [];
+  const useButtons: HTMLButtonElement[] = [];
+  const thumbCache = new Map<string, HTMLCanvasElement | null>();
 
-  const rgb = (r: number, g: number, b: number): number => (r << 16) | (g << 8) | b;
-  const isBg = (src: Source, x: number, y: number): boolean => {
-    if (x < 0 || y < 0 || x >= src.w || y >= src.h) return true;
-    const i = (y * src.w + x) * 4;
-    return src.px[i + 3] === 0 || keys.has(rgb(src.px[i], src.px[i + 1], src.px[i + 2]));
-  };
-
-  // ---------- cutting ----------
-  /** Nudge a tile's nominal left edge onto the gutter column next to it (sheets whose grid drifts a few px). */
-  function gutterX(src: Source, cx: number, y: number): number {
-    for (const d of [0, -1, 1, -2, 2, -3, 3]) {
-      const xx = cx - 1 + d;
-      if (xx < 0 || xx >= src.w) continue;
-      let all = true;
-      for (let yy = y; yy < Math.min(src.h, y + tile); yy++) if (!isBg(src, xx, yy)) { all = false; break; }
-      if (all) return xx + 1;
-    }
-    return cx;
-  }
-  function gutterY(src: Source, x: number, cy: number): number {
-    for (const d of [0, -1, 1, -2, 2, -3, 3]) {
-      const yy = cy - 1 + d;
-      if (yy < 0 || yy >= src.h) continue;
-      let all = true;
-      for (let xx = x; xx < Math.min(src.w, x + tile); xx++) if (!isBg(src, xx, yy)) { all = false; break; }
-      if (all) return yy + 1;
-    }
-    return cy;
-  }
-  function tileOrigin(src: Source, c: number, r: number): { x: number; y: number } {
-    if (!sel) return { x: 0, y: 0 };
-    const nx = sel.x + c * pitch, ny = sel.y + r * pitch;
-    if (snap !== 'auto') return { x: nx, y: ny };
-    const x = gutterX(src, nx, ny);
-    return { x, y: gutterY(src, x, ny) };
-  }
-  function tileCounts(): { cols: number; rows: number } {
-    if (!sel || snap === 'off') return { cols: 1, rows: 1 };
-    return { cols: Math.max(1, Math.round((sel.w - tile) / pitch) + 1), rows: Math.max(1, Math.round((sel.h - tile) / pitch) + 1) };
+  function freshProps(): PropDef[] { return (art.props ?? board?.defaultProps() ?? []).map((p) => ({ ...p })); }
+  function propOf(id: string | null): PropDef | null { return props.find((q) => q.id === id) ?? null; }
+  function spriteThumb(name: string): HTMLCanvasElement | null {
+    if (!thumbCache.has(name)) thumbCache.set(name, name.includes(':') ? propImage(name) : spriteCanvas(name));
+    return thumbCache.get(name) ?? null;
   }
 
-  function buildCut(): HTMLCanvasElement | null {
-    if (!source || !sel || sel.w <= 0 || sel.h <= 0) return null;
-    const out = document.createElement('canvas');
-    const octx = out.getContext('2d')!;
-    const raw = snap === 'off' || !(Math.abs((sel.w - tile) % pitch) < 0.5 && Math.abs((sel.h - tile) % pitch) < 0.5);
-    if (raw) {
-      out.width = sel.w; out.height = sel.h;
-      octx.drawImage(source.img, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
-    } else {
-      const { cols, rows } = tileCounts();
-      if (degap && pitch !== tile) {
-        out.width = cols * tile; out.height = rows * tile;
-        for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-          const o = tileOrigin(source, c, r);
-          octx.drawImage(source.img, o.x, o.y, tile, tile, c * tile, r * tile, tile, tile);
-        }
-      } else {
-        const a = tileOrigin(source, 0, 0), b = tileOrigin(source, cols - 1, rows - 1);
-        out.width = b.x + tile - a.x; out.height = b.y + tile - a.y;
-        octx.drawImage(source.img, a.x, a.y, out.width, out.height, 0, 0, out.width, out.height);
-      }
+  // ---------- undo ----------
+  function snapshot(): void {
+    history.push(exportArt());
+    if (history.length > 40) history.shift();
+    redo.length = 0;
+    updateBar();
+  }
+  async function restore(json: string): Promise<void> {
+    await applyArt(JSON.parse(json));
+    saveArt();
+    afterArt();
+  }
+  async function undo(): Promise<void> {
+    const prev = history.pop();
+    if (prev === undefined) return;
+    redo.push(exportArt());
+    await restore(prev);
+    toast('Undone.');
+  }
+  async function redoLast(): Promise<void> {
+    const next = redo.pop();
+    if (next === undefined) return;
+    history.push(exportArt());
+    await restore(next);
+    toast('Redone.');
+  }
+  /** After any change to the art data: fresh working copies, redraw the board, re-render. */
+  function afterArt(): void {
+    thumbCache.clear();
+    props = freshProps();
+    if (!propOf(propId)) propId = props[0]?.id ?? null;
+    board?.refreshArt();
+    board?.markProp(tab === 'scenery' ? propId : null);
+    renderTab();
+    updateBar();
+  }
+
+  // ---------- current art ----------
+  function setCurrent(c: Current | null): void {
+    current = c;
+    for (const b of useButtons) { b.disabled = !c; b.title = c ? `Use ${c.info}` : 'Nothing selected yet: cut something on the Sheet tab or pick a sprite'; }
+    updateBar();
+  }
+  function setCurrentSprite(name: string): void {
+    const c = spriteThumb(name);
+    if (!c) return;
+    setCurrent({ kind: 'sprite', name, canvas: c, info: `${name} (${c.width}×${c.height})` });
+  }
+  /** The sprite name to assign: a cut is saved first (under the typed name or `autoName`). */
+  function useCurrent(autoName: string): string | null {
+    if (!current) { toast('Nothing to use yet: cut something on the Sheet tab or pick a sprite.', 'error'); return null; }
+    if (current.kind === 'sprite') return current.name;
+    const name = nameInput.value.trim() || autoName;
+    setArtSprite(name, current.canvas);
+    if (!recent.includes(name)) recent.unshift(name);
+    recent.splice(10);
+    thumbCache.delete(name);
+    setCurrentSprite(name);
+    return name;
+  }
+  function useBtn(autoName: string, assign: (name: string) => void, label = '← use'): HTMLButtonElement {
+    const b = h('button', { class: 'btn btn--sm btn--blue', type: 'button', disabled: !current, onClick: () => {
+      snapshot();
+      const n = useCurrent(autoName);
+      if (n === null) { history.pop(); return; }
+      assign(n);
+      afterArt();
+    } }, label);
+    useButtons.push(b);
+    return b;
+  }
+  function usedBy(name: string): string[] {
+    const out: string[] = [];
+    for (const [i, s] of Object.entries(art.spaces)) {
+      if (s.strip === name) out.push(`space ${i} strip`);
+      if (s.decor === name) out.push(`space ${i} ${Number(i) % 10 === 0 ? 'picture' : 'decoration'}`);
     }
-    // key colours become transparent
-    if (keys.size) {
-      const id = octx.getImageData(0, 0, out.width, out.height);
-      const d = id.data;
-      for (let i = 0; i < d.length; i += 4) if (keys.has(rgb(d[i], d[i + 1], d[i + 2]))) d[i + 3] = 0;
-      octx.putImageData(id, 0, 0);
-    }
-    if (trim) {
-      const id = octx.getImageData(0, 0, out.width, out.height).data;
-      let x0 = out.width, y0 = out.height, x1 = -1, y1 = -1;
-      for (let y = 0; y < out.height; y++) for (let x = 0; x < out.width; x++) if (id[(y * out.width + x) * 4 + 3] > 0) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-      if (x1 >= x0 && y1 >= y0 && (x0 > 0 || y0 > 0 || x1 < out.width - 1 || y1 < out.height - 1)) {
-        const t = document.createElement('canvas');
-        t.width = x1 - x0 + 1; t.height = y1 - y0 + 1;
-        t.getContext('2d')!.drawImage(out, x0, y0, t.width, t.height, 0, 0, t.width, t.height);
-        return t;
-      }
-    }
+    for (const p of props) if (p.sprite === name) out.push(`prop “${p.id}”`);
+    if (SLOTS.some((s) => s.name === name)) out.push('a board slot');
     return out;
   }
 
-  function refreshCut(): void {
-    cut = buildCut();
-    renderPreview();
-    for (const b of useCutButtons) b.disabled = !cut;
-  }
-
-  /** Save the current cut under `name`, redraw the board, and refresh every list of sprite names. */
-  function saveCutAs(name: string): boolean {
-    const n = name.trim();
-    if (!cut) { toast('Select something on the sheet first.', 'error'); return false; }
-    if (!n) { toast('Give the sprite a name.', 'error'); return false; }
-    setArtSprite(n, cut);
-    board?.refreshArt();
-    toast(`Saved sprite “${n}” (${cut.width}×${cut.height}).`);
-    renderTab();
-    return true;
-  }
-
-  // ---------- sheet view ----------
-  const view = h('div', { class: 'arted__view' });
-  const spacer = h('div', { class: 'arted__spacer' });
-  const viewCanvas = document.createElement('canvas');
-  viewCanvas.className = 'arted__sheet';
-  view.append(spacer, viewCanvas);
-  const preview = document.createElement('canvas');
-  preview.className = 'arted__preview';
-  const previewInfo = h('span', { class: 'muted small' }, 'nothing selected');
-  const useCutButtons: HTMLButtonElement[] = [];
-
-  function sheetPoint(e: PointerEvent): { x: number; y: number } {
-    const r = viewCanvas.getBoundingClientRect();
-    return { x: Math.floor((e.clientX - r.left + view.scrollLeft) / zoom), y: Math.floor((e.clientY - r.top + view.scrollTop) / zoom) };
-  }
-  function clampSel(r: Rect): Rect {
-    if (!source) return r;
-    const x = Math.max(0, r.x), y = Math.max(0, r.y);
-    return { x, y, w: Math.max(1, Math.min(source.w - x, r.w + (r.x - x))), h: Math.max(1, Math.min(source.h - y, r.h + (r.y - y))) };
-  }
-  function selFromDrag(a: { x: number; y: number }, b: { x: number; y: number }): Rect {
-    const x0 = Math.min(a.x, b.x), y0 = Math.min(a.y, b.y), x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y);
-    if (snap === 'off' || pitch <= 0) return clampSel({ x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 });
-    const c0 = Math.floor((x0 - ox) / pitch), c1 = Math.floor((x1 - ox) / pitch);
-    const r0 = Math.floor((y0 - oy) / pitch), r1 = Math.floor((y1 - oy) / pitch);
-    return clampSel({ x: ox + c0 * pitch, y: oy + r0 * pitch, w: (c1 - c0) * pitch + tile, h: (r1 - r0) * pitch + tile });
-  }
-
-  function paint(): void {
-    const w = view.clientWidth, hgt = view.clientHeight;
-    if (viewCanvas.width !== w || viewCanvas.height !== hgt) { viewCanvas.width = Math.max(1, w); viewCanvas.height = Math.max(1, hgt); }
-    viewCanvas.style.left = `${view.scrollLeft}px`; viewCanvas.style.top = `${view.scrollTop}px`;
-    const ctx = viewCanvas.getContext('2d')!;
-    ctx.clearRect(0, 0, viewCanvas.width, viewCanvas.height);
-    if (!source) return;
-    ctx.imageSmoothingEnabled = false;
-    const sx = view.scrollLeft / zoom, sy = view.scrollTop / zoom;
-    const sw = viewCanvas.width / zoom, sh = viewCanvas.height / zoom;
-    ctx.drawImage(source.img, sx, sy, sw, sh, 0, 0, sw * zoom, sh * zoom);
-    if (snap !== 'off' && zoom >= 2 && pitch > 0) {
-      ctx.fillStyle = 'rgba(255, 0, 120, 0.25)';
-      const gap = Math.max(0, pitch - tile);
-      for (let c = Math.floor((sx - ox) / pitch) - 1; ox + c * pitch < sx + sw + pitch; c++) {
-        const gx = ox + c * pitch - gap; // gutter sits just before each tile
-        if (gap > 0) ctx.fillRect((gx - sx) * zoom, 0, gap * zoom, viewCanvas.height);
-        else ctx.fillRect((gx - sx) * zoom, 0, 1, viewCanvas.height);
-      }
-      for (let r = Math.floor((sy - oy) / pitch) - 1; oy + r * pitch < sy + sh + pitch; r++) {
-        const gy = oy + r * pitch - gap;
-        if (gap > 0) ctx.fillRect(0, (gy - sy) * zoom, viewCanvas.width, gap * zoom);
-        else ctx.fillRect(0, (gy - sy) * zoom, viewCanvas.width, 1);
-      }
-    }
-    if (sel) {
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#161616';
-      ctx.strokeRect((sel.x - sx) * zoom - 1, (sel.y - sy) * zoom - 1, sel.w * zoom + 2, sel.h * zoom + 2);
-      ctx.strokeStyle = '#fbd000';
-      ctx.strokeRect((sel.x - sx) * zoom + 1, (sel.y - sy) * zoom + 1, sel.w * zoom - 2, sel.h * zoom - 2);
-    }
-  }
-  function layoutView(): void {
-    spacer.style.width = `${(source?.w ?? 1) * zoom}px`;
-    spacer.style.height = `${(source?.h ?? 1) * zoom}px`;
-    paint();
-  }
-  view.addEventListener('scroll', paint);
-  viewCanvas.addEventListener('pointerdown', (e) => {
-    if (!source || e.button !== 0) return;
-    const p = sheetPoint(e);
-    if (picking) {
-      if (!isBg(source, p.x, p.y) || source.px[(p.y * source.w + p.x) * 4 + 3] !== 0) {
-        const i = (p.y * source.w + p.x) * 4;
-        keys.add(rgb(source.px[i], source.px[i + 1], source.px[i + 2]));
-      }
-      picking = false;
-      viewCanvas.style.cursor = 'crosshair';
-      renderKeys();
-      refreshCut();
-      return;
-    }
-    drag = p;
-    sel = selFromDrag(p, p);
-    viewCanvas.setPointerCapture(e.pointerId);
-    paint();
-    renderSelFields();
-  });
-  viewCanvas.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    sel = selFromDrag(drag, sheetPoint(e));
-    paint();
-    renderSelFields();
-  });
-  viewCanvas.addEventListener('pointerup', (e) => {
-    if (!drag) return;
-    sel = selFromDrag(drag, sheetPoint(e));
-    drag = null;
-    paint();
-    renderSelFields();
-    refreshCut();
-  });
-  viewCanvas.style.cursor = 'crosshair';
-
-  function renderPreview(): void {
-    const pctx = preview.getContext('2d')!;
-    if (!cut) { preview.width = 64; preview.height = 64; pctx.clearRect(0, 0, 64, 64); previewInfo.textContent = 'nothing selected'; return; }
-    const s = Math.max(1, Math.min(6, Math.floor(200 / Math.max(cut.width, cut.height))));
-    preview.width = cut.width * s; preview.height = cut.height * s;
-    pctx.imageSmoothingEnabled = false;
-    pctx.clearRect(0, 0, preview.width, preview.height);
-    pctx.drawImage(cut, 0, 0, preview.width, preview.height);
-    const { cols, rows } = tileCounts();
-    previewInfo.textContent = `${cut.width}×${cut.height} px` + (snap !== 'off' ? ` · ${cols}×${rows} tiles` : '');
-  }
-
   // ---------- sheet tab ----------
-  const sourceSel = h('select');
-  const snapSel = select([{ value: 'auto', label: 'Snap to grid lines (auto)' }, { value: 'grid', label: 'Snap to fixed grid' }, { value: 'off', label: 'Free selection' }], snap, (v) => { snap = v as Snap; paint(); refreshCut(); });
-  const keyRow = h('span', { class: 'arted__keys' });
-  const selX = num(0, 1, (v) => { if (sel) { sel = clampSel({ ...sel, x: Math.round(v) }); paint(); refreshCut(); } }, 60);
-  const selY = num(0, 1, (v) => { if (sel) { sel = clampSel({ ...sel, y: Math.round(v) }); paint(); refreshCut(); } }, 60);
-  const selW = num(0, 1, (v) => { if (sel) { sel = clampSel({ ...sel, w: Math.round(v) }); paint(); refreshCut(); } }, 60);
-  const selH = num(0, 1, (v) => { if (sel) { sel = clampSel({ ...sel, h: Math.round(v) }); paint(); refreshCut(); } }, 60);
-  function renderSelFields(): void {
-    selX.value = String(sel?.x ?? 0); selY.value = String(sel?.y ?? 0); selW.value = String(sel?.w ?? 0); selH.value = String(sel?.h ?? 0);
-  }
-  function renderKeys(): void {
-    clear(keyRow);
-    if (!keys.size) keyRow.append(h('span', { class: 'muted small' }, 'no key colour'));
-    for (const k of keys) {
-      const css = `#${k.toString(16).padStart(6, '0')}`;
-      keyRow.append(h('button', { class: 'arted__swatch', type: 'button', title: `${css} — click to remove`, style: { background: css }, onClick: () => { keys.delete(k); renderKeys(); refreshCut(); } }));
-    }
-  }
-  function renderSources(): void {
-    clear(sourceSel);
-    sources.forEach((s, i) => sourceSel.appendChild(h('option', { value: String(i) }, `${s.name} (${s.w}×${s.h})`)));
-    sourceSel.value = String(Math.max(0, sources.indexOf(source as Source)));
-  }
-  sourceSel.addEventListener('change', () => { useSource(sources[Number(sourceSel.value)] ?? null); });
-  function useSource(s: Source | null): void {
-    source = s; sel = null; cut = null;
-    keys = new Set<number>();
-    if (s && s.px[3] === 255) keys.add(rgb(s.px[0], s.px[1], s.px[2])); // a solid sheet background is usually the key
-    snap = s && !s.grid ? 'off' : 'auto'; // the packed atlas has no grid
-    snapSel.value = snap;
-    renderKeys();
-    layoutView();
-    renderSelFields();
-    refreshCut();
-  }
-  function nudge(dx: number, dy: number, dw: number, dh: number): void {
-    if (!sel) return;
-    sel = clampSel({ x: sel.x + dx, y: sel.y + dy, w: sel.w + dw, h: sel.h + dh });
-    paint(); renderSelFields(); refreshCut();
-  }
-  const nameInput = h('input', { type: 'text', placeholder: 'sprite name', style: { width: '150px' } });
-  nameInput.setAttribute('list', 'arted-names'); // read-only as a property
+  const sheet = new SheetView();
+  sheet.onMessage = (t, k) => toast(t, k);
+  sheet.onCut = (cut: Cut | null) => {
+    if (!cut) { if (current?.kind === 'cut') setCurrent(null); return; }
+    setCurrent({ kind: 'cut', name: '', canvas: cut.canvas, info: `cut ${cut.canvas.width}×${cut.canvas.height} from ${cut.source}` });
+  };
+  const nameInput = h('input', { type: 'text', placeholder: 'name for the cut (optional)', style: { width: '190px' } });
+  nameInput.setAttribute('list', 'arted-names');
   const nameList = h('datalist', { id: 'arted-names' });
-  function renderNameList(): void { clear(nameList); for (const n of spriteNames()) nameList.appendChild(h('option', { value: n })); }
-
   function sheetTab(): HTMLElement {
-    renderSources();
-    renderNameList();
-    const zoomIn = h('input', { type: 'range', min: '1', max: '8', step: '1', value: String(zoom), style: { width: '90px' } });
-    zoomIn.addEventListener('input', () => { zoom = Number(zoomIn.value); layoutView(); });
-    snapSel.value = snap;
-    const degapIn = h('input', { type: 'checkbox', checked: degap });
-    degapIn.addEventListener('change', () => { degap = degapIn.checked; refreshCut(); });
-    const trimIn = h('input', { type: 'checkbox', checked: trim });
-    trimIn.addEventListener('change', () => { trim = trimIn.checked; refreshCut(); });
-    const fileIn = h('input', { type: 'file', accept: 'image/png,image/gif,image/webp', style: { display: 'none' } });
-    fileIn.addEventListener('change', async () => {
-      const f = fileIn.files?.[0];
-      if (!f) return;
-      try {
-        const img = await decode(URL.createObjectURL(f));
-        const s = makeSource(f.name, img, img.naturalWidth, img.naturalHeight);
-        sources.push(s); useSource(s); renderSources();
-      } catch { toast('Could not read that image.', 'error'); }
-      fileIn.value = '';
-    });
-    const saveBtn = h('button', { class: 'btn btn--sm btn--primary', type: 'button', onClick: () => { if (saveCutAs(nameInput.value)) renderNameList(); } }, 'Save sprite');
-    const el = h('div', { class: 'arted__tab' },
-      h('div', { class: 'arted__row' }, h('label', null, 'Sheet'), sourceSel, h('button', { class: 'btn btn--sm', type: 'button', onClick: () => fileIn.click() }, 'Load PNG…'), fileIn),
-      h('div', { class: 'arted__row' },
-        h('label', null, 'Zoom'), zoomIn, snapSel,
-        h('label', { class: 'arted__check' }, degapIn, ' remove grid gaps'),
-        h('label', { class: 'arted__check' }, trimIn, ' trim empty edges')),
-      h('div', { class: 'arted__row' },
-        h('label', null, 'Grid'), h('span', { class: 'muted small' }, 'pitch'), num(pitch, 1, (v) => { pitch = Math.max(1, Math.round(v)); paint(); refreshCut(); }, 50),
-        h('span', { class: 'muted small' }, 'tile'), num(tile, 1, (v) => { tile = Math.max(1, Math.round(v)); paint(); refreshCut(); }, 50),
-        h('span', { class: 'muted small' }, 'origin x'), num(ox, 1, (v) => { ox = Math.round(v); paint(); }, 46),
-        h('span', { class: 'muted small' }, 'y'), num(oy, 1, (v) => { oy = Math.round(v); paint(); }, 46)),
-      h('div', { class: 'arted__row' },
-        h('label', null, 'Key colour'), keyRow,
-        h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { picking = true; viewCanvas.style.cursor = 'copy'; toast('Click a background pixel on the sheet.'); } }, 'Pick…'),
-        h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { keys.clear(); renderKeys(); refreshCut(); } }, 'None')),
-      view,
-      h('p', { class: 'arted__hint' }, 'Drag on the sheet to select. With snapping on, the selection grows a whole tile at a time and each tile is lined up with the grid lines around it.'),
-      h('div', { class: 'arted__row' },
-        h('label', null, 'x'), selX, h('label', null, 'y'), selY, h('label', null, 'w'), selW, h('label', null, 'h'), selH,
-        h('span', { class: 'arted__nudge' },
-          h('button', { class: 'btn btn--sm', type: 'button', title: 'move left', onClick: () => nudge(-1, 0, 0, 0) }, '◀'),
-          h('button', { class: 'btn btn--sm', type: 'button', title: 'move right', onClick: () => nudge(1, 0, 0, 0) }, '▶'),
-          h('button', { class: 'btn btn--sm', type: 'button', title: 'move up', onClick: () => nudge(0, -1, 0, 0) }, '▲'),
-          h('button', { class: 'btn btn--sm', type: 'button', title: 'move down', onClick: () => nudge(0, 1, 0, 0) }, '▼'))),
-      h('div', { class: 'arted__row arted__row--preview' }, preview, h('div', null, previewInfo, h('br'), h('span', { class: 'muted small' }, 'Selected art. Save it under a name, or use it straight from the other tabs.'))),
-      h('div', { class: 'arted__row' }, nameInput, nameList, saveBtn));
-    requestAnimationFrame(() => { layoutView(); renderSelFields(); });
+    clear(nameList);
+    for (const n of spriteNames()) nameList.appendChild(h('option', { value: n }));
+    const saveBtn = h('button', { class: 'btn btn--sm btn--primary', type: 'button', onClick: () => {
+      if (!current || current.kind !== 'cut') { toast('Select something on the sheet first.', 'error'); return; }
+      const name = nameInput.value.trim();
+      if (!name) { toast('Give the sprite a name first.', 'error'); nameInput.focus(); return; }
+      snapshot();
+      useCurrent(name);
+      toast(`Saved sprite “${name}”.`);
+      afterArt();
+    } }, 'Save sprite');
+    const recentRow = h('div', { class: 'arted__row arted__recent' }, h('label', null, 'Recent'));
+    if (!recent.length) recentRow.append(h('span', { class: 'muted small' }, 'sprites you save show up here'));
+    for (const n of recent) recentRow.append(h('button', { class: 'arted__card arted__card--mini', type: 'button', title: n, onClick: () => setCurrentSprite(n) }, thumb(spriteThumb(n), 32), h('span', null, n)));
+    const el = h('div', { class: 'arted__tab arted__tab--sheet' },
+      sheet.el,
+      h('div', { class: 'arted__row' }, nameInput, nameList, saveBtn, h('span', { class: 'muted small' }, 'or use the cut straight from the other tabs')),
+      recentRow);
+    requestAnimationFrame(() => sheet.layout());
     return el;
   }
 
-  // ---------- spaces tab ----------
-  function spriteOptions(extra: { value: string; label: string }[] = []): { value: string; label: string }[] {
-    return [...extra, ...spriteNames().map((n) => ({ value: n, label: isOverridden(n) ? `${n} ★` : n }))];
+  // ---------- sprites tab ----------
+  function spritesTab(): HTMLElement {
+    const filterIn = h('input', { type: 'text', placeholder: 'filter by name', value: filter, style: { width: '160px' } });
+    const count = h('span', { class: 'muted small' });
+    filterIn.addEventListener('input', () => { filter = filterIn.value.trim().toLowerCase(); renderGrid(); });
+    const grid = h('div', { class: 'arted__grid' });
+    const detail = h('div', { class: 'arted__detail' });
+    function renderGrid(): void {
+      clear(grid);
+      const all = spriteNames();
+      const list = all.filter((n) => !filter || n.includes(filter));
+      count.textContent = `${list.length} of ${all.length}`;
+      for (const n of list) {
+        const mine = isOverridden(n);
+        grid.append(h('button', { class: `arted__card${mine ? ' is-mine' : ''}${current?.kind === 'sprite' && current.name === n ? ' is-current' : ''}`, type: 'button', title: n, onClick: () => { setCurrentSprite(n); renderGrid(); renderDetail(); } },
+          thumb(spriteThumb(n), 40), h('span', null, n)));
+      }
+      if (!list.length) grid.append(h('p', { class: 'muted small' }, 'No sprite matches.'));
+    }
+    function renderDetail(): void {
+      clear(detail);
+      const c = current?.kind === 'sprite' ? current : null;
+      if (!c) { detail.append(h('p', { class: 'arted__hint' }, 'Click a sprite to make it the current art, then use it from the Spaces, Scenery or Slots tab. ★ marks sprites you made.')); return; }
+      const mine = isOverridden(c.name);
+      const used = usedBy(c.name);
+      const renameIn = h('input', { type: 'text', value: c.name, style: { width: '150px' } });
+      append(detail, [
+        h('div', { class: 'arted__row' }, thumb(c.canvas, 96), h('div', null, h('b', null, c.name), h('div', { class: 'muted small' }, `${c.canvas.width}×${c.canvas.height} px · ${mine ? 'yours' : 'from the pack'}`), h('div', { class: 'muted small' }, used.length ? `used by ${used.join(', ')}` : 'not used anywhere yet'))),
+        mine ? h('div', { class: 'arted__row' },
+          renameIn,
+          h('button', { class: 'btn btn--sm', type: 'button', onClick: () => {
+            const to = renameIn.value.trim();
+            if (!to || to === c.name) return;
+            if (spriteNames().includes(to)) { toast(`“${to}” already exists.`, 'error'); return; }
+            snapshot();
+            setArtSprite(to, c.canvas);
+            removeArtSprite(c.name);
+            for (const [i, s] of Object.entries(art.spaces)) setSpaceArt(Number(i), { strip: s.strip === c.name ? to : s.strip, decor: s.decor === c.name ? to : s.decor });
+            if (props.some((p) => p.sprite === c.name)) { for (const p of props) if (p.sprite === c.name) p.sprite = to; setProps(props); }
+            setCurrentSprite(to);
+            afterArt();
+          } }, 'Rename'),
+          h('button', { class: 'btn btn--sm btn--warn', type: 'button', onClick: () => {
+            snapshot();
+            removeArtSprite(c.name);
+            setCurrent(null);
+            afterArt();
+            if (used.length) toast(`Deleted. ${used.length} place(s) that used it fall back to the default.`);
+          } }, 'Delete')) : null]);
+    }
+    renderGrid(); renderDetail();
+    return h('div', { class: 'arted__tab arted__tab--scroll' },
+      h('div', { class: 'arted__row' }, h('label', null, 'Sprites'), filterIn, count),
+      detail, grid);
   }
-  function useCut(onSaved: (name: string) => void, autoName: string): HTMLButtonElement {
-    const b = h('button', { class: 'btn btn--sm btn--blue', type: 'button', title: 'Use the art selected on the Sheet tab', disabled: !cut, onClick: () => { if (saveCutAs(autoName)) onSaved(autoName); } }, '← use cut');
-    useCutButtons.push(b);
-    return b;
+
+  // ---------- spaces tab ----------
+  function contentWidth(): number { return Math.max(280, Math.min(560, panel.clientWidth - 28)); }
+  function drawBoardMap(canvas: HTMLCanvasElement, hoverIdx: number | null): void {
+    if (!board) return;
+    const img = board.boardImage();
+    const w = contentWidth();
+    canvas.width = w; canvas.height = w;
+    const ctx = canvas.getContext('2d')!;
+    const k = w / img.width;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(img, 0, 0, w, w);
+    for (let i = 0; i < 40; i++) {
+      const r = board.spaceTexRect(i);
+      if (art.spaces[i]) { ctx.fillStyle = '#fbd000'; ctx.strokeStyle = '#161616'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc((r.x + r.w / 2) * k, (r.y + r.h / 2) * k, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      if (i === hoverIdx && i !== spaceIdx) { ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2; ctx.strokeRect(r.x * k + 1, r.y * k + 1, r.w * k - 2, r.h * k - 2); }
+    }
+    const r = board.spaceTexRect(spaceIdx);
+    ctx.lineWidth = 3; ctx.strokeStyle = '#161616'; ctx.strokeRect(r.x * k, r.y * k, r.w * k, r.h * k);
+    ctx.lineWidth = 2; ctx.strokeStyle = '#fbd000'; ctx.strokeRect(r.x * k + 1.5, r.y * k + 1.5, r.w * k - 3, r.h * k - 3);
+  }
+  function drawSpacePreview(canvas: HTMLCanvasElement): void {
+    if (!board) return;
+    const img = board.boardImage();
+    const r = board.spaceTexRect(spaceIdx);
+    const swap = Math.abs(Math.abs(r.angle) - Math.PI / 2) < 0.01;
+    const ow = swap ? r.h : r.w, oh = swap ? r.w : r.h;
+    const k = Math.min(1, 220 / Math.max(ow, oh));
+    canvas.width = Math.round(ow * k); canvas.height = Math.round(oh * k);
+    const ctx = canvas.getContext('2d')!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(-r.angle);
+    ctx.drawImage(img, r.x, r.y, r.w, r.h, -r.w * k / 2, -r.h * k / 2, r.w * k, r.h * k);
   }
   function spacesTab(): HTMLElement {
     const names = THEME.spaceNames;
-    const cur = art.spaces[spaceIdx] ?? {};
+    const cur: SpaceArt = art.spaces[spaceIdx] ?? {};
     const isCorner = spaceIdx % 10 === 0;
-    const set = (patch: SpaceArt): void => {
-      setSpaceArt(spaceIdx, patch);
-      board?.refreshArt();
-      renderTab();
+    const set = (patch: SpaceArt): void => { snapshot(); setSpaceArt(spaceIdx, patch); afterArt(); };
+    const map = document.createElement('canvas');
+    map.className = 'arted__map';
+    map.title = 'Click a space (or click it on the 3D board)';
+    let hoverIdx: number | null = null;
+    const hitSpace = (e: MouseEvent): number | null => {
+      if (!board) return null;
+      const rect = map.getBoundingClientRect();
+      const k = board.boardImage().width / rect.width;
+      return board.spaceAtTex((e.clientX - rect.left) * k, (e.clientY - rect.top) * k);
     };
-    const pickBtn = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { toast('Click a space on the board.'); board?.setSpaceClick((i) => { spaceIdx = i; renderTab(); }); } }, 'Pick on board');
+    map.addEventListener('pointermove', (e) => { const i = hitSpace(e); if (i !== hoverIdx) { hoverIdx = i; drawBoardMap(map, hoverIdx); } map.style.cursor = i === null ? '' : 'pointer'; });
+    map.addEventListener('pointerleave', () => { hoverIdx = null; drawBoardMap(map, null); });
+    map.addEventListener('click', (e) => { const i = hitSpace(e); if (i !== null) { spaceIdx = i; renderTab(); } });
+    const preview = document.createElement('canvas');
+    preview.className = 'arted__spacepreview';
     const stripVal = cur.strip === undefined ? '(default)' : (cur.strip || '(none)');
     const decorVal = cur.decor === undefined ? '(default)' : (cur.decor || '(none)');
     const fromSel = (v: string): string | undefined => (v === '(default)' ? undefined : v === '(none)' ? '' : v);
-    const heightIn = h('input', { type: 'range', min: '12', max: '160', step: '2', value: String(cur.decorH ?? (isCorner ? 110 : 48)), style: { width: '140px' } });
-    heightIn.addEventListener('change', () => set({ decorH: Number(heightIn.value) }));
-    const el = h('div', { class: 'arted__tab' },
+    const baseH = isCorner ? 110 : 48;
+    const heightLabel = h('span', { class: 'muted small', style: { minWidth: '3.5em' } }, `${cur.decorH ?? baseH} px`);
+    const heightIn = h('input', { type: 'range', min: '12', max: '180', step: '2', value: String(cur.decorH ?? baseH), style: { width: '150px' } });
+    let heightSnap = false, heightTimer = 0;
+    heightIn.addEventListener('input', () => {
+      if (!heightSnap) { snapshot(); heightSnap = true; }
+      heightLabel.textContent = `${heightIn.value} px`;
+      window.clearTimeout(heightTimer);
+      heightTimer = window.setTimeout(() => { setSpaceArt(spaceIdx, { decorH: Number(heightIn.value) }); board?.refreshArt(); drawSpacePreview(preview); drawBoardMap(map, null); }, 90);
+    });
+    heightIn.addEventListener('change', () => { heightSnap = false; window.clearTimeout(heightTimer); setSpaceArt(spaceIdx, { decorH: Number(heightIn.value) }); afterArt(); });
+    const options = (extra: string[]) => [...extra.map((v) => ({ value: v, label: v })), ...spriteNames().map((n) => ({ value: n, label: isOverridden(n) ? `${n} ★` : n }))];
+    const sideBtn = isCorner ? null : h('button', { class: 'btn btn--sm', type: 'button', title: 'Give every space on this side the same ground strip', onClick: () => {
+      snapshot();
+      const side = sideOfSpace(spaceIdx);
+      for (let i = 0; i < 40; i++) if (i % 10 !== 0 && sideOfSpace(i) === side) setSpaceArt(i, { strip: cur.strip });
+      afterArt();
+    } }, 'Strip → whole side');
+    const lookBtn = board ? h('button', { class: 'btn btn--sm', type: 'button', title: 'Swing the camera to this space', onClick: () => {
+      const r = board.spaceTexRect(spaceIdx);
+      const k = 2 * BOARD_HALF / board.boardImage().width;
+      board.focusPoint((r.x + r.w / 2) * k - BOARD_HALF, 0.2, (r.y + r.h / 2) * k - BOARD_HALF, 5);
+    } }, 'Look at') : null;
+    const el = h('div', { class: 'arted__tab arted__tab--scroll' },
+      board ? map : null,
       h('div', { class: 'arted__row' }, h('label', null, 'Space'),
         select(names.map((n, i) => ({ value: String(i), label: `${i} · ${n}` })), String(spaceIdx), (v) => { spaceIdx = Number(v); renderTab(); }),
-        pickBtn),
-      isCorner ? h('p', { class: 'arted__hint' }, 'Corner: the picture replaces the whole corner drawing (name stays). Height is in board pixels.') : null,
-      isCorner ? null : h('div', { class: 'arted__row' }, h('label', null, 'Ground strip'),
-        select(spriteOptions([{ value: '(default)', label: '(default)' }, { value: '(none)', label: '(none)' }]), stripVal, (v) => set({ strip: fromSel(v) })),
-        useCut((n) => set({ strip: n }), `space${spaceIdx}_strip`),
-        thumb(cur.strip ? spriteCanvas(cur.strip) : null, 40)),
-      h('div', { class: 'arted__row' }, h('label', null, isCorner ? 'Picture' : 'Decoration'),
-        select(spriteOptions([{ value: '(default)', label: '(default)' }, { value: '(none)', label: '(none)' }]), decorVal, (v) => set({ decor: fromSel(v) })),
-        useCut((n) => set({ decor: n }), `space${spaceIdx}_${isCorner ? 'corner' : 'decor'}`),
-        thumb(cur.decor ? spriteCanvas(cur.decor) : null, 40)),
-      h('div', { class: 'arted__row' }, h('label', null, 'Height'), heightIn, h('span', { class: 'muted small' }, `${cur.decorH ?? (isCorner ? 110 : 48)} px`)),
-      h('div', { class: 'arted__row' },
-        h('button', { class: 'btn btn--sm', type: 'button', onClick: () => set({ strip: undefined, decor: undefined, decorH: undefined }) }, 'Reset this space'),
-        h('span', { class: 'muted small' }, `${Object.keys(art.spaces).length} space(s) customised`)),
-      h('p', { class: 'arted__hint' }, 'Strips repeat one tile along the bottom of the space. Decorations sit above the strip; ★ marks your own sprites.'));
+        h('button', { class: 'btn btn--sm', type: 'button', title: 'previous space', onClick: () => { spaceIdx = (spaceIdx + 39) % 40; renderTab(); } }, '◀'),
+        h('button', { class: 'btn btn--sm', type: 'button', title: 'next space', onClick: () => { spaceIdx = (spaceIdx + 1) % 40; renderTab(); } }, '▶'),
+        lookBtn),
+      h('div', { class: 'arted__row arted__row--top' },
+        board ? preview : null,
+        h('div', { class: 'arted__fields' },
+          isCorner ? h('p', { class: 'arted__hint' }, 'A corner: the picture replaces the whole drawing (the name stays).') : null,
+          isCorner ? null : h('div', { class: 'arted__row' }, h('label', null, 'Ground strip'),
+            select(options(['(default)', '(none)']), stripVal, (v) => set({ strip: fromSel(v) })),
+            useBtn(`space${spaceIdx}_strip`, (n) => setSpaceArt(spaceIdx, { strip: n })),
+            thumb(cur.strip ? spriteThumb(cur.strip) : null, 32)),
+          h('div', { class: 'arted__row' }, h('label', null, isCorner ? 'Picture' : 'Decoration'),
+            select(options(['(default)', '(none)']), decorVal, (v) => set({ decor: fromSel(v) })),
+            useBtn(`space${spaceIdx}_${isCorner ? 'corner' : 'decor'}`, (n) => setSpaceArt(spaceIdx, { decor: n })),
+            thumb(cur.decor ? spriteThumb(cur.decor) : null, 32)),
+          h('div', { class: 'arted__row' }, h('label', null, 'Height'), heightIn, heightLabel),
+          h('div', { class: 'arted__row' },
+            h('button', { class: 'btn btn--sm', type: 'button', disabled: !art.spaces[spaceIdx], onClick: () => set({ strip: undefined, decor: undefined, decorH: undefined }) }, 'Reset this space'),
+            sideBtn))),
+      h('p', { class: 'arted__hint' }, `${Object.keys(art.spaces).length} of 40 spaces customised (yellow dots). Strips repeat one tile along the bottom edge; decorations sit above the strip. Click a space on the map or on the 3D board.`));
+    requestAnimationFrame(() => { drawBoardMap(map, null); drawSpacePreview(preview); });
     return el;
   }
 
   // ---------- scenery tab ----------
-  function commitProps(rebuild: boolean): void {
-    setProps(props);
-    if (rebuild) { board?.rebuildScenery(); board?.markProp(propId); }
+  function commitProps(): void { setProps(props); }
+  function drawSceneMap(canvas: HTMLCanvasElement, hoverId: string | null): void {
+    const w = contentWidth();
+    canvas.width = w; canvas.height = w;
+    const ctx = canvas.getContext('2d')!;
+    const R = mapRange;
+    const X = (x: number) => (x / R + 1) / 2 * w, Z = (z: number) => (z / R + 1) / 2 * w;
+    ctx.fillStyle = '#5c9a3c'; ctx.fillRect(0, 0, w, w);
+    ctx.fillStyle = '#4f8a33';
+    for (let i = -R; i <= R; i += 4) { ctx.fillRect(X(i), 0, 1, w); ctx.fillRect(0, Z(i), w, 1); }
+    ctx.fillStyle = '#5c8fd6'; ctx.strokeStyle = '#161616'; ctx.lineWidth = 2;
+    ctx.fillRect(X(-BOARD_HALF), Z(-BOARD_HALF), (X(BOARD_HALF) - X(-BOARD_HALF)), (Z(BOARD_HALF) - Z(-BOARD_HALF)));
+    ctx.strokeRect(X(-BOARD_HALF), Z(-BOARD_HALF), (X(BOARD_HALF) - X(-BOARD_HALF)), (Z(BOARD_HALF) - Z(-BOARD_HALF)));
+    ctx.fillStyle = '#161616'; ctx.font = '11px ui-monospace, Menlo, Consolas, monospace'; ctx.textBaseline = 'top';
+    ctx.fillText('board', X(-BOARD_HALF) + 4, Z(-BOARD_HALF) + 3);
+    ctx.fillText(`±${R} units · the camera side is the bottom`, 4, 3);
+    ctx.imageSmoothingEnabled = false;
+    for (const p of props) {
+      const img = spriteThumb(p.sprite);
+      const px = X(p.x), pz = Z(p.z);
+      const sel = p.id === propId, hov = p.id === hoverId;
+      if (img) {
+        const s = Math.max(10, Math.min(28, p.h * (w / R) * 0.5));
+        const iw = s * img.width / Math.max(img.width, img.height), ih = s * img.height / Math.max(img.width, img.height);
+        if (p.float) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.ellipse(px, pz, iw / 2 + 3, ih / 2 + 3, 0, 0, Math.PI * 2); ctx.fill(); }
+        ctx.drawImage(img, px - iw / 2, pz - ih / 2, iw, ih);
+      } else { ctx.fillStyle = '#d9413a'; ctx.beginPath(); ctx.arc(px, pz, 4, 0, Math.PI * 2); ctx.fill(); }
+      if (sel || hov) {
+        ctx.strokeStyle = sel ? '#fbd000' : 'rgba(255,255,255,0.9)'; ctx.lineWidth = sel ? 3 : 2;
+        ctx.beginPath(); ctx.arc(px, pz, 16, 0, Math.PI * 2); ctx.stroke();
+        const label = p.id;
+        const tw = ctx.measureText(label).width + 8;
+        ctx.fillStyle = 'rgba(22,22,22,0.85)'; ctx.fillRect(px - tw / 2, pz + 18, tw, 14);
+        ctx.fillStyle = sel ? '#fbd000' : '#fff'; ctx.fillText(label, px - tw / 2 + 4, pz + 20);
+      }
+    }
   }
   function sceneryTab(): HTMLElement {
-    const p = props.find((q) => q.id === propId) ?? null;
+    const p = propOf(propId);
     board?.markProp(p?.id ?? null);
-    const list = h('select', { size: '8', class: 'arted__list' }, ...props.map((q) => h('option', { value: q.id, selected: q.id === propId }, `${q.id} · ${q.sprite}`)));
-    list.addEventListener('change', () => { propId = list.value; placing = false; renderTab(); });
+    const map = document.createElement('canvas');
+    map.className = 'arted__map';
+    map.title = 'Click a prop to select it, drag to move it, double-click to look at it';
+    let hoverId: string | null = null;
+    let dragging = false;
+    const rectOf = () => map.getBoundingClientRect();
+    const toWorld = (e: PointerEvent): { x: number; z: number } => { const r = rectOf(); return { x: ((e.clientX - r.left) / r.width * 2 - 1) * mapRange, z: ((e.clientY - r.top) / r.height * 2 - 1) * mapRange }; };
+    const nearest = (e: PointerEvent): PropDef | null => {
+      const r = rectOf();
+      let best: PropDef | null = null, bd = 16;
+      for (const q of props) {
+        const px = (q.x / mapRange + 1) / 2 * r.width, pz = (q.z / mapRange + 1) / 2 * r.height;
+        const d = Math.hypot(px - (e.clientX - r.left), pz - (e.clientY - r.top));
+        if (d < bd) { bd = d; best = q; }
+      }
+      return best;
+    };
+    map.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const q = nearest(e);
+      if (!q) return;
+      if (q.id !== propId) { propId = q.id; renderTab(); return; }
+      snapshot();
+      dragging = true;
+      map.setPointerCapture(e.pointerId);
+    });
+    map.addEventListener('pointermove', (e) => {
+      if (dragging && p) {
+        const g = toWorld(e);
+        p.x = Math.round(g.x * 4) / 4; p.z = Math.round(g.z * 4) / 4;
+        if (board && !board.moveProp(p)) board.rebuildScenery();
+        drawSceneMap(map, hoverId);
+        posX.value = String(p.x); posZ.value = String(p.z);
+        return;
+      }
+      const q = nearest(e);
+      const id = q?.id ?? null;
+      if (id !== hoverId) { hoverId = id; drawSceneMap(map, hoverId); }
+      map.style.cursor = q ? (q.id === propId ? 'grab' : 'pointer') : '';
+    });
+    const endDrag = () => { if (!dragging) return; dragging = false; commitProps(); updateBar(); };
+    map.addEventListener('pointerup', endDrag);
+    map.addEventListener('pointercancel', endDrag);
+    map.addEventListener('pointerleave', () => { if (!dragging) { hoverId = null; drawSceneMap(map, null); } });
+    map.addEventListener('dblclick', () => { if (p) board?.focusPoint(p.x, p.y + p.h / 2, p.z, Math.max(6, p.h * 4)); });
+    const rangeBtns = [16, 32, 48].map((r) => h('button', { class: `btn btn--sm${mapRange === r ? ' btn--blue' : ''}`, type: 'button', onClick: () => { mapRange = r; renderTab(); } }, `±${r}`));
+
+    const list = h('select', { size: '6', class: 'arted__list' }, ...props.map((q) => h('option', { value: q.id }, `${q.id} · ${q.sprite}`)));
+    list.value = propId ?? '';
+    list.addEventListener('change', () => { propId = list.value; renderTab(); });
     const uniqueId = (base: string): string => { let i = 1; let id = base; while (props.some((q) => q.id === id)) id = `${base}-${++i}`; return id; };
     const add = (): void => {
-      const id = uniqueId('prop');
-      const def: PropDef = { id, sprite: cut ? '' : 'bush:3', x: 0, y: 0, z: 14, h: 1 };
-      if (cut) { if (!saveCutAs(`${id}_art`)) return; def.sprite = `${id}_art`; }
-      props.push(def); propId = id; commitProps(true); renderTab();
+      snapshot();
+      const id = uniqueId(current?.kind === 'sprite' ? current.name.replace(/[:]/g, '') : 'prop');
+      const def: PropDef = { id, sprite: 'bush:3', x: 0, y: 0, z: BOARD_HALF + 3, h: 1 };
+      if (current) { const n = useCurrent(`${id}_art`); if (n) def.sprite = n; }
+      props.push(def); propId = id; commitProps(); afterArt();
+      toast(`Added “${id}” in front of the board. Drag it on the map, or turn on “Move on table”.`);
     };
-    const dup = (): void => { if (!p) return; const id = uniqueId(p.id); props.push({ ...p, id, x: p.x + 1 }); propId = id; commitProps(true); renderTab(); };
-    const remove = (): void => { if (!p) return; props = props.filter((q) => q !== p); propId = props[0]?.id ?? null; commitProps(true); renderTab(); };
-    const reset = (): void => { setProps(null); props = (board?.defaultProps() ?? []).map((q) => ({ ...q })); propId = props[0]?.id ?? null; board?.rebuildScenery(); renderTab(); };
-    const move = (): void => { if (p && board && !board.moveProp(p)) board.rebuildScenery(); setProps(props); };
-    const placeBtn = h('button', { class: `btn btn--sm ${placing ? 'btn--blue' : ''}`, type: 'button', disabled: !p, onClick: () => { placing = !placing; renderTab(); if (placing) toast('Click on the table to put it there.'); } }, placing ? 'Placing… (click table)' : 'Place with a click');
-    const el = h('div', { class: 'arted__tab' },
-      h('div', { class: 'arted__row' }, list),
-      h('div', { class: 'arted__row' },
-        h('button', { class: 'btn btn--sm btn--good', type: 'button', onClick: add }, cut ? 'Add (from cut)' : 'Add'),
-        h('button', { class: 'btn btn--sm', type: 'button', disabled: !p, onClick: dup }, 'Duplicate'),
-        h('button', { class: 'btn btn--sm btn--warn', type: 'button', disabled: !p, onClick: remove }, 'Remove'),
-        h('button', { class: 'btn btn--sm', type: 'button', onClick: reset }, 'Default layout')),
+    const dup = (): void => { if (!p) return; snapshot(); const id = uniqueId(p.id); props.push({ ...p, id, x: p.x + 1 }); propId = id; commitProps(); afterArt(); };
+    const remove = (): void => { if (!p) return; snapshot(); props = props.filter((q) => q !== p); propId = props[0]?.id ?? null; commitProps(); afterArt(); };
+    const reset = (): void => { snapshot(); setProps(null); afterArt(); toast('Scenery back to the built-in layout.'); };
+    const moveLive = (): void => { if (p && board && !board.moveProp(p)) board.rebuildScenery(); commitProps(); drawSceneMap(map, hoverId); };
+    const posX = num(p?.x ?? 0, 0.5, (v) => { if (p) { p.x = v; moveLive(); } });
+    const posZ = num(p?.z ?? 0, 0.5, (v) => { if (p) { p.z = v; moveLive(); } });
+    const moveBtn = h('button', { class: `btn btn--sm${moveMode ? ' btn--blue' : ''}`, type: 'button', disabled: !p, title: 'Click or drag on the 3D table to put the selected prop there', onClick: () => { moveMode = !moveMode; renderTab(); if (moveMode) toast('Click or drag on the table. Esc stops.'); } }, moveMode ? 'Moving on table… (Esc)' : 'Move on table');
+    const heightIn = h('input', { type: 'range', min: '0.2', max: '8', step: '0.1', value: String(p?.h ?? 1), style: { width: '120px' } });
+    let hSnap = false;
+    heightIn.addEventListener('input', () => { if (!p) return; if (!hSnap) { snapshot(); hSnap = true; } p.h = Number(heightIn.value); heightNum.value = heightIn.value; });
+    heightIn.addEventListener('change', () => { hSnap = false; if (!p) return; commitProps(); board?.rebuildScenery(); board?.markProp(p.id); drawSceneMap(map, hoverId); });
+    const heightNum = num(p?.h ?? 1, 0.1, (v) => { if (p) { snapshot(); p.h = Math.max(0.1, v); heightIn.value = String(p.h); commitProps(); board?.rebuildScenery(); board?.markProp(p.id); drawSceneMap(map, hoverId); } }, 60);
+    const el = h('div', { class: 'arted__tab arted__tab--scroll' },
+      map,
+      h('div', { class: 'arted__row' }, h('label', null, 'Map'), ...rangeBtns, h('span', { class: 'arted__grow' }),
+        h('button', { class: 'btn btn--sm', type: 'button', disabled: !p, title: 'Swing the camera to the selected prop', onClick: () => { if (p) board?.focusPoint(p.x, p.y + p.h / 2, p.z, Math.max(6, p.h * 4)); } }, 'Look at')),
+      h('div', { class: 'arted__row arted__row--top' }, list,
+        h('div', { class: 'arted__btncol' },
+          h('button', { class: 'btn btn--sm btn--good', type: 'button', onClick: add }, current ? `Add “${current.kind === 'cut' ? 'cut' : current.name}”` : 'Add prop'),
+          h('button', { class: 'btn btn--sm', type: 'button', disabled: !p, onClick: dup }, 'Duplicate'),
+          h('button', { class: 'btn btn--sm btn--warn', type: 'button', disabled: !p, onClick: remove }, 'Remove'),
+          h('button', { class: 'btn btn--sm', type: 'button', onClick: reset }, 'Default layout'))),
       p ? h('div', { class: 'arted__prop' },
-        h('div', { class: 'arted__row' }, h('label', null, 'Name'), h('input', { type: 'text', value: p.id, style: { width: '120px' }, onChange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim(); if (v && !props.some((q) => q !== p && q.id === v)) { p.id = v; propId = v; commitProps(true); renderTab(); } } })),
-        h('div', { class: 'arted__row' }, h('label', null, 'Art'),
-          select(spriteOptions(ASSEMBLED.map((a) => ({ value: a, label: a }))), p.sprite, (v) => { p.sprite = v; commitProps(true); renderTab(); }),
-          useCut((n) => { p.sprite = n; commitProps(true); renderTab(); }, `${p.id}_art`),
-          thumb(p.sprite.includes(':') ? null : spriteCanvas(p.sprite), 40)),
+        h('div', { class: 'arted__row' }, h('label', null, 'Name'), h('input', { type: 'text', value: p.id, style: { width: '130px' }, onChange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim(); if (v && !props.some((q) => q !== p && q.id === v)) { snapshot(); p.id = v; propId = v; commitProps(); afterArt(); } } }),
+          h('label', null, 'Art'),
+          select([...ASSEMBLED.map((a) => ({ value: a, label: a })), ...spriteNames().map((n) => ({ value: n, label: isOverridden(n) ? `${n} ★` : n }))], p.sprite, (v) => { snapshot(); p.sprite = v; commitProps(); afterArt(); }),
+          useBtn(`${p.id}_art`, (n) => { p.sprite = n; commitProps(); }),
+          thumb(spriteThumb(p.sprite), 36)),
         h('div', { class: 'arted__row' },
-          h('label', null, 'x'), num(p.x, 0.5, (v) => { p.x = v; move(); }),
-          h('label', null, 'z'), num(p.z, 0.5, (v) => { p.z = v; move(); }),
-          h('label', null, 'y'), num(p.y, 0.25, (v) => { p.y = v; move(); }),
-          h('label', null, 'height'), num(p.h, 0.1, (v) => { p.h = Math.max(0.1, v); commitProps(true); })),
-        h('div', { class: 'arted__row' },
-          h('label', { class: 'arted__check' }, h('input', { type: 'checkbox', checked: !!p.float, onChange: (e: Event) => { p.float = (e.target as HTMLInputElement).checked; move(); } }), ' floats (clouds)'),
-          placeBtn),
-        h('p', { class: 'arted__hint' }, 'The board is about 22 units wide; its edge is at ±11. x runs left to right, z towards the camera, y is height off the table.')) : h('p', { class: 'arted__hint' }, 'No scenery. Add a prop from the current cut, or restore the default layout.'));
+          h('label', null, 'x'), posX, h('label', null, 'z'), posZ,
+          h('label', null, 'y'), num(p.y, 0.25, (v) => { p.y = v; moveLive(); }),
+          h('label', { class: 'arted__check' }, h('input', { type: 'checkbox', checked: !!p.float, onChange: (e: Event) => { snapshot(); p.float = (e.target as HTMLInputElement).checked; moveLive(); } }), ' floats')),
+        h('div', { class: 'arted__row' }, h('label', null, 'Height'), heightIn, heightNum, h('span', { class: 'muted small' }, 'units (a token is about 0.8)'), moveBtn),
+        h('p', { class: 'arted__hint' }, 'x runs left to right, z towards the camera (the board edge is at ±8.6), y lifts it off the table. Drag on the map, type numbers, or move it on the 3D table.')) : h('p', { class: 'arted__hint' }, 'No scenery yet. Add a prop, or restore the default layout.'));
+    requestAnimationFrame(() => drawSceneMap(map, null));
     return el;
   }
-  function onBoardClick(e: PointerEvent): void {
-    if (!placing || !board) return;
-    const p = props.find((q) => q.id === propId);
+  // moving props by clicking/dragging on the 3D table (capture phase, so the camera does not turn)
+  function onTableDown(e: PointerEvent): void {
+    if (!moveMode || !board || e.button !== 0 || tab !== 'scenery') return;
+    const p = propOf(propId);
+    if (!p) return;
+    e.stopPropagation(); e.preventDefault();
+    snapshot();
+    tableDrag = true;
+    onTableMove(e);
+  }
+  function onTableMove(e: PointerEvent): void {
+    if (!tableDrag || !board) return;
+    e.stopPropagation();
+    const p = propOf(propId);
     const g = board.pickGround(e);
     if (!p || !g) return;
     p.x = Math.round(g.x * 4) / 4; p.z = Math.round(g.z * 4) / 4;
     if (!board.moveProp(p)) board.rebuildScenery();
-    setProps(props);
+  }
+  function onTableUp(e: PointerEvent): void {
+    if (!tableDrag) return;
+    e.stopPropagation();
+    tableDrag = false;
+    commitProps();
     renderTab();
   }
 
   // ---------- slots tab ----------
   function slotsTab(): HTMLElement {
     const rows = SLOTS.map((s) => {
-      const c = spriteCanvas(s.name);
-      const status = isOverridden(s.name) ? 'yours' : c ? 'pack' : 'empty';
-      return h('div', { class: 'arted__slot' },
-        thumb(c, 40),
-        h('div', { class: 'arted__slotname' }, h('b', null, s.name), h('span', { class: 'muted small' }, ` ${s.what} · ${status}`)),
-        useCut(() => renderTab(), s.name),
-        select([{ value: '', label: 'copy from…' }, ...spriteNames().filter((n) => n !== s.name).map((n) => ({ value: n, label: n }))], '', (v) => { const src = v && spriteCanvas(v); if (src) { setArtSprite(s.name, src); board?.refreshArt(); renderTab(); } }),
-        isOverridden(s.name) ? h('button', { class: 'btn btn--sm', type: 'button', title: 'back to the pack sprite', onClick: () => { removeArtSprite(s.name); board?.refreshArt(); renderTab(); } }, 'Clear') : null);
+      const c = spriteThumb(s.name);
+      const mine = isOverridden(s.name);
+      return h('div', { class: `arted__slot${mine ? ' is-mine' : ''}` },
+        thumb(c, 44),
+        h('div', { class: 'arted__slotname' }, h('b', null, s.name), h('span', { class: 'muted small' }, `${s.what} · ${mine ? 'yours' : c ? 'pack' : 'empty'}`)),
+        useBtn(s.name, (n) => { if (n !== s.name) { const src = spriteThumb(n); if (src) setArtSprite(s.name, src); } }),
+        select([{ value: '', label: 'copy from…' }, ...spriteNames().filter((n) => n !== s.name).map((n) => ({ value: n, label: n }))], '', (v) => { const src = v && spriteThumb(v); if (src) { snapshot(); setArtSprite(s.name, src); afterArt(); } }),
+        mine ? h('button', { class: 'btn btn--sm', type: 'button', title: 'back to the pack sprite', onClick: () => { snapshot(); removeArtSprite(s.name); afterArt(); } }, 'Clear') : h('span'));
     });
-    const mine = Object.keys(art.sprites).sort();
-    const el = h('div', { class: 'arted__tab' },
-      h('p', { class: 'arted__hint' }, 'Slots are the sprites the board draws by name. Replace one with the current cut, copy another sprite into it, or clear it to get the pack art back.'),
-      ...rows,
-      h('h3', { class: 'arted__h' }, `Your sprites (${mine.length})`),
-      mine.length ? h('div', { class: 'arted__mine' }, ...mine.map((n) => h('div', { class: 'arted__slot' }, thumb(spriteCanvas(n), 40), h('div', { class: 'arted__slotname' }, h('b', null, n)),
-        h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { removeArtSprite(n); board?.refreshArt(); renderTab(); } }, 'Delete')))) : h('p', { class: 'muted small' }, 'None yet. Cut something on the Sheet tab.'));
-    return el;
+    return h('div', { class: 'arted__tab arted__tab--scroll' },
+      h('p', { class: 'arted__hint' }, 'Slots are sprites the board draws by name. Put the current art into one, copy another sprite into it, or clear it to get the pack art back. Corner pictures are on the Spaces tab (0, 10, 20, 30).'),
+      ...rows);
   }
 
   // ---------- frame ----------
   const panel = h('div', { class: 'arted__panel paper paper--flat' });
+  const body = h('div', { class: 'arted__body' });
+  const foot = h('div', { class: 'arted__foot muted small' });
+  const handle = h('div', { class: 'arted__handle', title: 'drag to resize' });
+  panel.append(body, foot, handle);
+  try { const w = Number(localStorage.getItem(WIDTH_KEY)); if (w >= 380) panel.style.width = `${w}px`; } catch { /* ignore */ }
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const left = panel.getBoundingClientRect().left;
+    const move = (ev: PointerEvent) => { const w = Math.max(380, Math.min(window.innerWidth - left - 12, ev.clientX - left)); panel.style.width = `${w}px`; };
+    const up = () => { handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up); try { localStorage.setItem(WIDTH_KEY, String(panel.clientWidth)); } catch { /* ignore */ } renderTab(); };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+  });
   const tabBtns = new Map<Tab, HTMLButtonElement>();
   function renderTab(): void {
-    useCutButtons.length = 0;
-    clear(panel);
-    if (tab !== 'spaces') board?.setSpaceClick(() => {});
-    if (tab !== 'scenery') { placing = false; board?.markProp(null); }
-    panel.appendChild(tab === 'sheet' ? sheetTab() : tab === 'spaces' ? spacesTab() : tab === 'scenery' ? sceneryTab() : slotsTab());
+    useButtons.length = 0;
+    clear(body);
+    if (tab !== 'scenery') { moveMode = false; tableDrag = false; board?.markProp(null); }
+    board?.setSpaceClick(tab === 'spaces' ? (i) => { spaceIdx = i; renderTab(); } : () => {});
+    body.appendChild(tab === 'sheet' ? sheetTab() : tab === 'sprites' ? spritesTab() : tab === 'spaces' ? spacesTab() : tab === 'scenery' ? sceneryTab() : slotsTab());
     for (const [t, b] of tabBtns) b.classList.toggle('btn--blue', t === tab);
+    setCurrent(current);
+    const mine = Object.keys(art.sprites).length, spaces = Object.keys(art.spaces).length;
+    foot.textContent = `${mine} sprite${mine === 1 ? '' : 's'} of yours · ${spaces} space${spaces === 1 ? '' : 's'} customised · scenery: ${art.props ? `${art.props.length} props (custom)` : 'default layout'} · saved in this browser`;
   }
-  const tabs = (['sheet', 'spaces', 'scenery', 'slots'] as Tab[]).map((t) => {
-    const b = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { tab = t; renderTab(); } }, t[0].toUpperCase() + t.slice(1));
+  const tabs = ([['sheet', 'Sheet'], ['sprites', 'Sprites'], ['spaces', 'Spaces'], ['scenery', 'Scenery'], ['slots', 'Slots']] as [Tab, string][]).map(([t, label]) => {
+    const b = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { tab = t; renderTab(); } }, label);
     tabBtns.set(t, b);
     return b;
   });
+  const chip = h('button', { class: 'arted__chip', type: 'button', title: 'The current art: what the “← use” buttons apply. Click to browse sprites.', onClick: () => { tab = 'sprites'; renderTab(); } });
+  const undoBtn = h('button', { class: 'btn btn--sm', type: 'button', title: 'Undo (Ctrl+Z)', onClick: () => void undo() }, 'Undo');
+  const redoBtn = h('button', { class: 'btn btn--sm', type: 'button', title: 'Redo (Ctrl+Shift+Z)', onClick: () => void redoLast() }, 'Redo');
+  function updateBar(): void {
+    clear(chip);
+    if (current) chip.append(thumb(current.canvas, 28), h('span', null, current.kind === 'cut' ? `cut ${current.canvas.width}×${current.canvas.height}` : current.name));
+    else chip.append(h('span', { class: 'muted' }, 'no current art'));
+    undoBtn.disabled = !history.length; redoBtn.disabled = !redo.length;
+    undoBtn.textContent = history.length ? `Undo (${history.length})` : 'Undo';
+  }
   const importIn = h('input', { type: 'file', accept: 'application/json,.json', style: { display: 'none' } });
   importIn.addEventListener('change', async () => {
     const f = importIn.files?.[0];
     if (!f) return;
-    try {
-      await importArt(await f.text());
-      props = (art.props ?? board?.defaultProps() ?? []).map((q) => ({ ...q })); propId = props[0]?.id ?? null;
-      board?.refreshArt(); renderTab(); toast('Art imported.');
-    } catch { toast('That file is not an art export.', 'error'); }
+    try { snapshot(); await importArt(await f.text()); afterArt(); toast('Art imported.'); } catch { history.pop(); toast('That file is not an art export.', 'error'); }
     importIn.value = '';
   });
   let resetArmed = 0;
-  const resetBtn = h('button', { class: 'btn btn--sm btn--warn', type: 'button', onClick: async () => {
+  const resetBtn = h('button', { class: 'btn btn--sm btn--warn', type: 'button', title: 'Back to the built-in art (can be undone)', onClick: async () => {
     if (Date.now() - resetArmed > 3000) { resetArmed = Date.now(); resetBtn.textContent = 'Really reset?'; setTimeout(() => { resetBtn.textContent = 'Reset all'; }, 3000); return; }
+    snapshot();
     await resetArt();
-    props = (board?.defaultProps() ?? []).map((q) => ({ ...q })); propId = props[0]?.id ?? null;
-    board?.refreshArt(); renderTab(); toast('Back to the built-in art.');
+    afterArt();
+    toast('Back to the built-in art.');
   } }, 'Reset all');
+  const help = h('div', { class: 'arted__help paper paper--flat hidden' },
+    h('b', null, 'How it works'),
+    h('ol', null,
+      h('li', null, h('b', null, 'Sheet'), ': drag over the tiles you want. The grid snaps a whole tile at a time and lines each tile up with the gaps around it, so nothing is cut off. Save it under a name, or just leave it as the current art.'),
+      h('li', null, h('b', null, 'Sprites'), ': every sprite in the pack and every one you made. Click one to make it the current art.'),
+      h('li', null, h('b', null, 'Spaces'), ': click a space on the mini board (or on the 3D board) and give it a ground strip and a decoration with “← use”.'),
+      h('li', null, h('b', null, 'Scenery'), ': the hills, pipes and clouds around the table. Drag them on the map, or turn on “Move on table” and drag on the 3D table.'),
+      h('li', null, h('b', null, 'Slots'), ': the logo, houses, decks, dice and other art the board draws by name.')),
+    h('b', null, 'Shortcuts'),
+    h('ul', null,
+      h('li', null, 'Sheet: arrows nudge the selection, shift+arrows resize it, ctrl+arrows move a whole tile. Ctrl+wheel zooms, right-drag pans.'),
+      h('li', null, 'Ctrl+Z undoes, Ctrl+Shift+Z redoes. Esc stops picking or moving.'),
+      h('li', null, 'Everything saves in this browser as you go. Export JSON to keep a copy or move it to another browser.')));
   const bar = h('div', { class: 'arted__bar paper paper--flat' },
     h('b', { class: 'arted__title' }, 'Art editor'),
     h('span', { class: 'arted__tabs' }, ...tabs),
+    chip,
     h('span', { class: 'arted__grow' }),
-    h('span', { class: 'muted small' }, 'Changes save in this browser'),
-    h('button', { class: 'btn btn--sm', type: 'button', onClick: () => {
+    undoBtn, redoBtn,
+    h('button', { class: 'btn btn--sm', type: 'button', title: 'Download everything as art.json', onClick: () => {
       const blob = new Blob([exportArt()], { type: 'application/json' });
       const a = h('a', { href: URL.createObjectURL(blob), download: 'art.json' });
       document.body.appendChild(a); a.click(); a.remove();
     } }, 'Export JSON'),
     h('button', { class: 'btn btn--sm', type: 'button', onClick: () => importIn.click() }, 'Import JSON'), importIn,
     resetBtn,
+    h('button', { class: 'btn btn--sm', type: 'button', title: 'How to use the editor', onClick: () => help.classList.toggle('hidden') }, '?'),
     h('button', { class: 'btn btn--sm btn--primary', type: 'button', id: 'arted-close', onClick: () => close() }, 'Close'));
-  const overlay = h('div', { class: 'arted', id: 'art-editor' }, bar, panel);
+  const overlay = h('div', { class: 'arted', id: 'art-editor' }, bar, panel, help);
   root.appendChild(overlay);
 
   const boardEl = board?.wrap ?? null;
   boardEl?.classList.add('is-editing');
-  boardEl?.addEventListener('pointerup', onBoardClick);
-  const onResize = (): void => { if (tab === 'sheet') paint(); };
+  boardEl?.addEventListener('pointerdown', onTableDown, true);
+  boardEl?.addEventListener('pointermove', onTableMove, true);
+  boardEl?.addEventListener('pointerup', onTableUp, true);
+  const onKey = (e: KeyboardEvent): void => {
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    const typing = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+    if (e.key === 'Escape') { if (moveMode) { moveMode = false; renderTab(); } help.classList.add('hidden'); return; }
+    if (typing) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); void (e.shiftKey ? redoLast() : undo()); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); void redoLast(); }
+  };
+  document.addEventListener('keydown', onKey);
+  let resizeTimer = 0;
+  const onResize = (): void => { window.clearTimeout(resizeTimer); resizeTimer = window.setTimeout(() => renderTab(), 120); };
   window.addEventListener('resize', onResize);
 
   function close(): void {
     boardEl?.classList.remove('is-editing');
-    boardEl?.removeEventListener('pointerup', onBoardClick);
+    boardEl?.removeEventListener('pointerdown', onTableDown, true);
+    boardEl?.removeEventListener('pointermove', onTableMove, true);
+    boardEl?.removeEventListener('pointerup', onTableUp, true);
+    document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
     board?.setSpaceClick(() => {});
     board?.markProp(null);
@@ -618,16 +679,16 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
 
   // ---------- sources ----------
   const atlas = packImage();
-  if (atlas) sources.push(makeSource('pack atlas', atlas, atlas.naturalWidth, atlas.naturalHeight, false));
+  const atlasSheet = (): SheetImage | null => (atlas ? sheetImage('pack atlas', atlas, atlas.naturalWidth, atlas.naturalHeight, false) : null);
+  if (!sheetSources().length) { const a = atlasSheet(); if (a) sheet.addSource(a); }
   renderTab();
+  updateBar();
   void Promise.all(sheetSources().map(async (s) => {
-    try { const img = await decode(s.image); return makeSource(s.name, img, img.naturalWidth, img.naturalHeight); } catch { return null; }
+    try { const img = await decodeImage(s.image); return sheetImage(s.name, img, img.naturalWidth, img.naturalHeight); } catch { return null; }
   })).then((loaded) => {
-    sources.unshift(...loaded.filter((s): s is Source => s !== null)); // the build's sheets first, in their order
-    if (!source && sources.length) useSource(sources[0]);
-    renderSources();
+    sheet.prependSources(loaded.filter((s): s is SheetImage => s !== null));
+    if (sheetSources().length) { const a = atlasSheet(); if (a) sheet.addSource(a); }
   });
-  if (!sheetSources().length && sources.length) useSource(sources[0]); // otherwise the first sheet, once decoded
 
   return { close };
 }

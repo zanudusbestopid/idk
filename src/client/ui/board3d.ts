@@ -156,7 +156,10 @@ function spaceDecorFor(i: number): { name: string; h: number } | undefined {
   const d = WORLD_DECOR[i];
   return d ? { name: d.name, h: o?.decorH ?? d.h } : undefined;
 }
+/** Half the board's width in world units (the art editor's maps use it). */
+export const BOARD_HALF = HALF;
 /** A canvas for a scenery prop: a sprite name, or 'bush:N' / 'pipe:N' for assembled strips and stacks. */
+export function propImage(name: string): HTMLCanvasElement | null { return propCanvas(name); }
 function propCanvas(name: string): HTMLCanvasElement | null {
   const m = /^(bush|pipe):(\d+)$/.exec(name);
   if (m) {
@@ -613,6 +616,28 @@ export class Board3D implements BoardView {
       this.scene.add(prop.group);
       this.props.push(prop);
     }
+  }
+
+  /** Art editor: the board face texture (a 2048² canvas) as drawn right now. */
+  boardImage(): HTMLCanvasElement { return this.boardCanvas; }
+  /** Art editor: where a space sits on the board texture, and the rotation (radians) that puts it upright. */
+  spaceTexRect(i: number): { x: number; y: number; w: number; h: number; angle: number } {
+    const r = spaceRect(i);
+    return { x: (r.x + HALF) * S, y: (r.z + HALF) * S, w: r.w * S, h: r.d * S, angle: i % 10 === 0 ? 0 : sideAngle(i) };
+  }
+  /** Art editor: the space under a board-texture point (texture px), or null. */
+  spaceAtTex(x: number, y: number): number | null { return indexAt(x / S - HALF, y / S - HALF); }
+  /** Art editor: in free look, swing the camera to look at a point from a comfortable distance. */
+  focusPoint(x: number, y: number, z: number, dist = 9): void {
+    if (this.camMode !== 'free') this.setMode('free');
+    const target = new THREE.Vector3(x, y, z);
+    const dir = new THREE.Vector3(x, 0, z).normalize();
+    if (!dir.lengthSq()) dir.set(0, 0, 1);
+    // stand outside the point (further from the board middle), slightly above
+    const pos = new THREE.Vector3(x + dir.x * dist * 0.8, y + dist * 0.55, z + dir.z * dist * 0.8);
+    this.camera.position.copy(pos);
+    this.controls.target.copy(target);
+    this.controls.update();
   }
 
   /** Art editor: the table point under a pointer event, or null. */
