@@ -11,6 +11,7 @@ import { sfx } from '../audio.js';
 import { h, clear, sleep } from '../dom.js';
 import { GROUP_COLORS, LIGHT_GROUPS, sideOf, spaceColor, type BoardView } from './board.js';
 import { tokenSvg } from './home.js';
+import { faceNumbers, simulateThrow } from './dicephysics.js';
 
 const CORNER = 1.55;
 const HALF = (2 * CORNER + 9) / 2; // 6.05
@@ -206,8 +207,19 @@ export class Board3D implements BoardView {
   private destroyed = false;
   private pointerDown: { x: number; y: number } | null = null;
   private ro: ResizeObserver;
-  private topView = false;
-  private userMoved = false;
+  // Camera director
+  private camMode: 'follow' | 'overview' | 'top' | 'free' = 'follow';
+  private followId: string | null = null;
+  private followZoom = 1;
+  private camPos = new THREE.Vector3(0, 13, 15);
+  private camLook = new THREE.Vector3(0, 0, 0.4);
+  private smoothOut = new THREE.Vector2(0, 1);
+  private smoothTravel = new THREE.Vector2(-1, 0);
+  private diceFocusUntil = 0;
+  private diceFocusPose: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null;
+  private focusSpace: number | null = null;
+  private camButtons = new Map<string, HTMLButtonElement>();
+  private camLabel: HTMLElement;
 
   constructor(onSpaceClick: (index: number) => void) {
     this.onSpaceClick = onSpaceClick;
@@ -216,10 +228,16 @@ export class Board3D implements BoardView {
     this.bannerWho = h('span', { class: 'who' });
     this.banner = h('div', { class: 'turn-banner paper paper--flat' }, this.bannerWho, h('span', null, "'s turn"));
     this.pot = h('div', { class: 'pot paper paper--flat hidden' });
-    const viewBtn = h('button', { class: 'btn btn--sm view-btn', type: 'button', title: 'Switch camera', onClick: () => this.toggleView() }, 'Top view');
+    const camBar = h('div', { class: 'cam-bar' });
+    for (const [mode, label, title] of [['follow', 'Follow', 'Camera follows whoever is on turn'], ['overview', 'Overview', 'See the whole board'], ['top', 'Top', 'Straight down']] as const) {
+      const b = h('button', { class: 'btn btn--sm', type: 'button', title, onClick: () => this.setMode(mode) }, label) as HTMLButtonElement;
+      this.camButtons.set(mode, b);
+      camBar.appendChild(b);
+    }
+    this.camLabel = h('div', { class: 'cam-label' });
     const hint = h('div', { class: 'board3d-hint' }, 'Drag to look around · scroll to zoom · click a street for its deed');
     setTimeout(() => hint.classList.add('is-fading'), 7000);
-    this.wrap = h('div', { class: 'board3d-wrap' }, this.canvas, h('div', { class: 'board3d-overlay' }, this.banner, this.pot), viewBtn, hint);
+    this.wrap = h('div', { class: 'board3d-wrap' }, this.canvas, h('div', { class: 'board3d-overlay' }, this.banner, this.pot), h('div', { class: 'cam-ui' }, camBar, this.camLabel), hint);
 
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -230,17 +248,23 @@ export class Board3D implements BoardView {
     this.scene.fog = new THREE.Fog('#7d4d22', 30, 60);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
-    this.camera.position.set(0, 13, 15);
+    this.camera.position.copy(this.camPos);
     this.controls = new OrbitControls(this.camera, this.canvas);
-    this.controls.addEventListener('start', () => { this.userMoved = true; });
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = 6;
+    this.controls.minDistance = 2;
     this.controls.maxDistance = 34;
     this.controls.maxPolarAngle = 1.32;
-    this.controls.minPolarAngle = 0.12;
+    this.controls.minPolarAngle = 0.05;
     this.controls.enablePan = false;
-    this.controls.target.set(0, 0, 0.6);
+    this.controls.enableZoom = false; // the director handles zoom until the viewer takes over
+    this.controls.target.copy(this.camLook);
+    this.canvas.addEventListener('wheel', (e) => {
+      if (this.camMode === 'free') return;
+      e.preventDefault();
+      this.followZoom = Math.min(2.4, Math.max(0.55, this.followZoom * (e.deltaY > 0 ? 1.1 : 0.9)));
+    }, { passive: false });
+    this.setMode('follow');
 
     // Lights
     this.scene.add(new THREE.HemisphereLight(0xfff4e0, 0x6b4a2b, 1.35));
@@ -300,7 +324,10 @@ export class Board3D implements BoardView {
     void this.loadDiceFaces();
 
     // Interaction
-    this.canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (this.pointerDown && this.camMode !== 'free' && Math.hypot(e.clientX - this.pointerDown.x, e.clientY - this.pointerDown.y) > 6) this.setMode('free');
+      this.onPointerMove(e);
+    });
     this.canvas.addEventListener('pointerdown', (e) => { this.pointerDown = { x: e.clientX, y: e.clientY }; });
     this.canvas.addEventListener('pointerup', (e) => this.onPointerUp(e));
     this.canvas.addEventListener('pointerleave', () => { this.hover.visible = false; });
@@ -451,9 +478,13 @@ export class Board3D implements BoardView {
       void svgTexture(tokenSvg(p.token), 512).then((tex) => { mat.map = tex; mat.visible = true; mat.needsUpdate = true; });
     }
     this.resize();
+    const ov = this.overviewPose();
+    this.camPos.copy(ov.pos); this.camLook.copy(ov.look);
+    this.followId = state.players[state.currentPlayer]?.id ?? null;
     this.updateStatic(state);
     this.placeTokens(state, false);
     if (state.dice) void this.showDice(state.dice, false);
+    this.updateCamLabel();
   }
 
   resize(): void {
@@ -462,20 +493,105 @@ export class Board3D implements BoardView {
     this.renderer.setSize(w, hgt, false);
     this.camera.aspect = w / hgt;
     this.camera.updateProjectionMatrix();
-    if (!this.userMoved && !this.topView) this.frameBoard();
   }
 
-  /** Place the camera so the whole board fits the canvas, whatever its aspect ratio. */
-  private frameBoard(): void {
+  // ---------- camera director ----------
+
+  setMode(mode: 'follow' | 'overview' | 'top' | 'free'): void {
+    if (mode !== 'free' && this.camMode === 'free') {
+      // resume from wherever the viewer left the camera
+      this.camPos.copy(this.camera.position);
+      this.camLook.copy(this.controls.target);
+    }
+    this.camMode = mode;
+    this.controls.enableZoom = mode === 'free';
+    for (const [m, b] of this.camButtons) b.classList.toggle('btn--blue', m === mode);
+    this.updateCamLabel();
+  }
+
+  private updateCamLabel(): void {
+    const who = this.state?.players.find((p) => p.id === this.followId)?.name;
+    this.camLabel.textContent = this.camMode === 'follow' ? (who ? `Following ${who}` : '') : this.camMode === 'free' ? 'Free look · press Follow to return' : '';
+  }
+
+  /** Distance at which the whole board fits the current canvas. */
+  private fitDistance(margin: number): number {
     const fov = THREE.MathUtils.degToRad(this.camera.fov);
     const vHalf = Math.tan(fov / 2);
     const hHalf = vHalf * this.camera.aspect;
-    const extent = HALF + 0.6;
-    const dist = Math.max(extent / hHalf, (extent / vHalf) * 0.78) * 1.06;
+    const extent = HALF + margin;
+    return Math.max(extent / hHalf, (extent / vHalf) * 0.78) * 1.06;
+  }
+
+  private overviewPose(): { pos: THREE.Vector3; look: THREE.Vector3 } {
+    const dist = this.fitDistance(0.6);
     const elev = 0.78;
-    this.camera.position.set(0, Math.sin(elev) * dist, Math.cos(elev) * dist + 0.4);
-    this.controls.target.set(0, 0, 0.4);
-    this.controls.update();
+    return { pos: new THREE.Vector3(0, Math.sin(elev) * dist, Math.cos(elev) * dist + 0.4), look: new THREE.Vector3(0, 0, 0.4) };
+  }
+
+  private topPose(): { pos: THREE.Vector3; look: THREE.Vector3 } {
+    return { pos: new THREE.Vector3(0, this.fitDistance(0.8) * 0.96, 0.41), look: new THREE.Vector3(0, 0, 0.4) };
+  }
+
+  /** Where a space's outer edge faces, and the direction of travel (increasing index) along it. */
+  private spaceDirs(i: number): { out: THREE.Vector2; travel: THREE.Vector2 } {
+    if (i % 10 === 0) {
+      const [cx, cz] = spaceCenter(i);
+      const out = new THREE.Vector2(Math.sign(cx), Math.sign(cz)).normalize();
+      const travel = i === 0 ? new THREE.Vector2(-1, 0) : i === 10 ? new THREE.Vector2(0, -1) : i === 20 ? new THREE.Vector2(1, 0) : new THREE.Vector2(0, 1);
+      return { out, travel };
+    }
+    const side = sideOf(i);
+    if (side === 'bottom') return { out: new THREE.Vector2(0, 1), travel: new THREE.Vector2(-1, 0) };
+    if (side === 'left') return { out: new THREE.Vector2(-1, 0), travel: new THREE.Vector2(0, -1) };
+    if (side === 'top') return { out: new THREE.Vector2(0, -1), travel: new THREE.Vector2(1, 0) };
+    return { out: new THREE.Vector2(1, 0), travel: new THREE.Vector2(0, 1) };
+  }
+
+  /** A view of one space from its outer side (used for auctions). */
+  private spacePose(i: number, distScale = 1): { pos: THREE.Vector3; look: THREE.Vector3 } {
+    const [cx, cz] = spaceCenter(i);
+    const { out } = this.spaceDirs(i);
+    const d = 5.2 * distScale;
+    return { pos: new THREE.Vector3(cx + out.x * d * 0.75, BOARD_Y + d * 0.85, cz + out.y * d * 0.75), look: new THREE.Vector3(cx - out.x * 0.8, BOARD_Y + 0.2, cz - out.y * 0.8) };
+  }
+
+  private desiredPose(now: number, dt: number): { pos: THREE.Vector3; look: THREE.Vector3; tau: number } {
+    if (this.camMode === 'overview') return { ...this.overviewPose(), tau: 0.6 };
+    if (this.camMode === 'top') return { ...this.topPose(), tau: 0.6 };
+    // follow
+    if (now < this.diceFocusUntil && this.diceFocusPose) return { ...this.diceFocusPose, tau: 0.3 };
+    if (this.focusSpace !== null) return { ...this.spacePose(this.focusSpace), tau: 0.5 };
+    const tok = this.followId ? this.tokens.get(this.followId) : undefined;
+    const idx = this.followId ? this.tokenPos.get(this.followId) : undefined;
+    if (!tok || idx === undefined) return { ...this.overviewPose(), tau: 0.6 };
+    const dirs = this.spaceDirs(idx);
+    const k = 1 - Math.exp(-dt / 450);
+    this.smoothOut.lerp(dirs.out, k).normalize();
+    this.smoothTravel.lerp(dirs.travel, k).normalize();
+    const z = this.followZoom;
+    const p = tok.group.position;
+    const pos = new THREE.Vector3(
+      p.x + this.smoothOut.x * 4.0 * z - this.smoothTravel.x * 2.2 * z,
+      BOARD_Y + 3.9 * z,
+      p.z + this.smoothOut.y * 4.0 * z - this.smoothTravel.y * 2.2 * z,
+    );
+    const look = new THREE.Vector3(p.x + this.smoothTravel.x * 1.4 - this.smoothOut.x * 0.6, BOARD_Y + 0.3, p.z + this.smoothTravel.y * 1.4 - this.smoothOut.y * 0.6);
+    return { pos, look, tau: 0.3 };
+  }
+
+  private updateCamera(now: number, dt: number): void {
+    if (this.camMode === 'free') { this.controls.update(); return; }
+    const { pos, look, tau } = this.desiredPose(now, dt);
+    const k = 1 - Math.exp(-dt / (tau * 1000));
+    this.camPos.lerp(pos, k);
+    this.camLook.lerp(look, k);
+    if (this.camPos.y < 0.9) this.camPos.y = 0.9;
+    this.camera.position.copy(this.camPos);
+    this.controls.target.copy(this.camLook);
+    this.controls.update(); // keeps OrbitControls' internal state in sync so a drag takes over smoothly
+    this.camera.position.copy(this.camPos);
+    this.camera.lookAt(this.camLook);
   }
 
   updateStatic(state: GameState): void {
@@ -524,11 +640,14 @@ export class Board3D implements BoardView {
     }
     const cur = state.players[state.currentPlayer];
     if (cur) { this.bannerWho.textContent = cur.name; this.banner.style.setProperty('--who', cur.color); (this.ring.material as THREE.MeshBasicMaterial).color.set(cur.color); }
+    if (cur && cur.id !== this.followId) { this.followId = cur.id; this.updateCamLabel(); }
+    this.focusSpace = state.phase === 'auction' && state.auction ? state.auction.space : null;
     if (state.phase === 'ended' && state.winner) {
       const w = byId.get(state.winner);
       this.bannerWho.textContent = w?.name ?? '';
       (this.banner.lastChild as HTMLElement).textContent = ' wins!';
       this.ring.visible = false;
+      if (this.camMode === 'follow') this.setMode('overview');
     } else this.ring.visible = !!cur;
     this.pot.classList.toggle('hidden', !state.config.freeParkingJackpot);
     this.pot.textContent = `Free Parking pot: $${state.freeParkingPot}`;
@@ -675,23 +794,72 @@ export class Board3D implements BoardView {
 
   async showDice(dice: [number, number], animate: boolean): Promise<void> {
     const yaws = [0.3 + Math.random() * 0.6, -0.4 - Math.random() * 0.6];
-    if (!animate) { this.dice.forEach((d, i) => this.setDieFace(d, dice[i], yaws[i])); return; }
-    sfx.dice();
-    const rest = this.dice.map((d) => d.position.clone());
-    const spins = this.dice.map(() => new THREE.Vector3(Math.random() * 8 + 6, Math.random() * 8 + 6, Math.random() * 8 + 6));
-    const finalQ = this.dice.map((d, i) => { const tmp = d.clone(); this.setDieFace(tmp, dice[i], yaws[i]); return tmp.quaternion.clone(); });
-    await new Promise<void>((resolve) => this.tweens.push(timed(1000, (t, dt) => {
+    if (!animate) {
+      this.dice.forEach((d, i) => { d.position.set(i === 0 ? -0.5 : 0.5, BOARD_Y + 0.31, 1.3); this.setDieFace(d, dice[i], yaws[i]); });
+      return;
+    }
+    // Throw from the side of the player on turn, toward the middle of the board.
+    const tok = this.followId ? this.tokens.get(this.followId) : undefined;
+    const from2 = tok ? new THREE.Vector2(tok.group.position.x, tok.group.position.z) : new THREE.Vector2(0, HALF);
+    if (from2.lengthSq() < 0.01) from2.set(0, 1);
+    const dir = from2.clone().normalize(); // center → thrower
+    const side = new THREE.Vector2(-dir.y, dir.x);
+    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    const launch = dir.clone().multiplyScalar(3.7);
+    const speed = rnd(3.2, 4.6);
+    const start = [0, 1].map((i) => { const o = side.clone().multiplyScalar(i === 0 ? -0.36 : 0.36); return [launch.x + o.x, BOARD_Y + rnd(1.5, 2.1), launch.y + o.y] as [number, number, number]; });
+    const velocity = [0, 1].map(() => { const lat = side.clone().multiplyScalar(rnd(-1.2, 1.2)); return [-dir.x * speed + lat.x, rnd(1.2, 2.4), -dir.y * speed + lat.y] as [number, number, number]; });
+    const angular = [0, 1].map(() => [rnd(-16, 16), rnd(-16, 16), rnd(-16, 16)] as [number, number, number]);
+    const half = 0.31;
+    const result = simulateThrow({
+      start, velocity, angular, groundY: BOARD_Y, halfSize: half,
+      bounds: { minX: -4.1, maxX: 4.1, minZ: -4.1, maxZ: 4.1 },
+      obstacles: [{ x: -2.7, y: BOARD_Y + 0.045, z: 0.2, w: 1.5, h: 0.09, d: 1.0, rotY: -0.12 }, { x: 2.7, y: BOARD_Y + 0.045, z: 0.2, w: 1.5, h: 0.09, d: 1.0, rotY: 0.09 }],
+    });
+    // Pips: the face that lands on top shows the rolled value.
+    if (this.dieTextures.length === 6) {
       this.dice.forEach((d, i) => {
-        const bounce = Math.abs(Math.sin(t * Math.PI * 2.2)) * (1 - t) * 1.6;
-        d.position.set(rest[i].x + Math.sin(t * 9 + i) * (1 - t) * 0.35, rest[i].y + bounce, rest[i].z + Math.cos(t * 7 + i) * (1 - t) * 0.3);
-        if (t < 0.7) {
-          d.rotation.x += spins[i].x * dt / 1000; d.rotation.y += spins[i].y * dt / 1000; d.rotation.z += spins[i].z * dt / 1000;
-        } else {
-          const k = (t - 0.7) / 0.3;
-          d.quaternion.slerp(finalQ[i], Math.min(1, k * 0.35 + 0.1));
-        }
+        const faces = faceNumbers(result.topAxis[i], dice[i]);
+        const old = d.material as THREE.Material[] | THREE.Material;
+        d.material = faces.map((n) => new THREE.MeshLambertMaterial({ map: this.dieTextures[n - 1] }));
+        if (Array.isArray(old)) old.forEach((m) => m.dispose()); else old.dispose();
       });
-    }, () => { this.dice.forEach((d, i) => { d.quaternion.copy(finalQ[i]); d.position.copy(rest[i]); }); resolve(); })));
+    }
+    // Camera: watch where they land, from the thrower's side.
+    const last = result.frames.map((f) => f[f.length - 1].pos);
+    const c = new THREE.Vector3((last[0][0] + last[1][0]) / 2, BOARD_Y + 0.3, (last[0][2] + last[1][2]) / 2);
+    this.diceFocusPose = { pos: new THREE.Vector3(c.x + dir.x * 3.4, BOARD_Y + 2.9, c.z + dir.y * 3.4), look: c };
+    const timeScale = Math.max(1, result.duration / 1.9);
+    const playMs = (result.duration / timeScale) * 1000;
+    if (this.camMode === 'follow') this.diceFocusUntil = performance.now() + playMs + 350;
+    sfx.dice();
+    let nextImpact = 0;
+    const pos = new THREE.Vector3(), qa = new THREE.Quaternion(), qb = new THREE.Quaternion();
+    await new Promise<void>((resolve) => this.tweens.push(timed(playMs, (t) => {
+      const simT = t * result.duration;
+      const f = simT / result.dt;
+      const i0 = Math.min(result.frames[0].length - 1, Math.floor(f));
+      const i1 = Math.min(result.frames[0].length - 1, i0 + 1);
+      const k = f - i0;
+      this.dice.forEach((d, i) => {
+        const a = result.frames[i][i0], b = result.frames[i][i1];
+        pos.set(a.pos[0] + (b.pos[0] - a.pos[0]) * k, a.pos[1] + (b.pos[1] - a.pos[1]) * k, a.pos[2] + (b.pos[2] - a.pos[2]) * k);
+        d.position.copy(pos);
+        qa.set(a.quat[0], a.quat[1], a.quat[2], a.quat[3]); qb.set(b.quat[0], b.quat[1], b.quat[2], b.quat[3]);
+        d.quaternion.copy(qa.slerp(qb, k));
+      });
+      while (nextImpact < result.impacts.length && result.impacts[nextImpact].t <= simT) { sfx.knock(result.impacts[nextImpact].strength); nextImpact++; }
+    }, resolve)));
+    // Settle exactly flat.
+    const AX = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)];
+    const snaps = this.dice.map((d, i) => {
+      const up = AX[result.topAxis[i]].clone().applyQuaternion(d.quaternion);
+      const fix = new THREE.Quaternion().setFromUnitVectors(up.normalize(), new THREE.Vector3(0, 1, 0));
+      return { from: d.quaternion.clone(), to: fix.multiply(d.quaternion), y0: d.position.y };
+    });
+    await new Promise<void>((resolve) => this.tweens.push(timed(140, (t) => {
+      this.dice.forEach((d, i) => { d.quaternion.slerpQuaternions(snaps[i].from, snaps[i].to, t); d.position.y = snaps[i].y0 + (BOARD_Y + half - snaps[i].y0) * t; });
+    }, resolve)));
   }
 
   drawCard(deck: 'chance' | 'chest'): void {
@@ -709,19 +877,6 @@ export class Board3D implements BoardView {
       card.rotation.z = t * Math.PI * 2 * (deck === 'chance' ? 1 : -1);
       card.rotation.y = t * 0.6;
     }, () => { this.scene.remove(card); }));
-  }
-
-  private toggleView(): void {
-    this.topView = !this.topView;
-    const btn = this.wrap.querySelector('.view-btn') as HTMLElement;
-    btn.textContent = this.topView ? '3D view' : 'Top view';
-    const fov = THREE.MathUtils.degToRad(this.camera.fov);
-    const fit = (HALF + 0.8) / Math.min(Math.tan(fov / 2), Math.tan(fov / 2) * this.camera.aspect) * 1.02;
-    const from = this.camera.position.clone();
-    let target: THREE.Vector3;
-    if (this.topView) target = new THREE.Vector3(0, fit, 0.41);
-    else { this.userMoved = false; this.frameBoard(); target = this.camera.position.clone(); this.camera.position.copy(from); }
-    this.tweens.push(timed(700, (t) => { this.camera.position.lerpVectors(from, target, easeInOut(t)); }));
   }
 
   // ---------- interaction ----------
@@ -762,7 +917,7 @@ export class Board3D implements BoardView {
     const now = performance.now();
     const dt = Math.min(50, now - this.last);
     this.last = now;
-    this.controls.update();
+    this.updateCamera(now, dt);
     for (let i = this.tweens.length - 1; i >= 0; i--) if (!this.tweens[i].update(now, dt)) this.tweens.splice(i, 1);
     // Paper cutouts always face the camera (turning only around the vertical axis)
     for (const tok of this.tokens.values()) {

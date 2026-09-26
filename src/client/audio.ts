@@ -42,7 +42,8 @@ function noise(dur: number, gain = 0.08, when = 0): void {
 
 export const sfx = {
   step(): void { tone(520 + Math.random() * 80, 0.06, 'triangle', 0.08); noise(0.03, 0.03); },
-  dice(): void { for (let i = 0; i < 6; i++) noise(0.05, 0.06, i * 0.09); tone(300, 0.08, 'square', 0.05, 0.55); },
+  dice(): void { for (let i = 0; i < 4; i++) noise(0.04, 0.05, i * 0.07); },
+  knock(strength = 1): void { noise(0.035, 0.05 + 0.12 * strength); tone(180 + Math.random() * 60, 0.05, 'triangle', 0.05 + 0.1 * strength, 0, -60); },
   cash(): void { tone(880, 0.08, 'square', 0.06); tone(1320, 0.12, 'square', 0.06, 0.08); },
   pay(): void { tone(440, 0.1, 'sawtooth', 0.05); tone(330, 0.16, 'sawtooth', 0.05, 0.1); },
   card(): void { noise(0.12, 0.09); tone(700, 0.05, 'triangle', 0.05, 0.05); },

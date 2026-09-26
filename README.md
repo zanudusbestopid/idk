@@ -1,7 +1,9 @@
 # Paper Tycoon
 
 A property-trading board game in a paper-craft art style: a paper board on a wooden table in 3D,
-with flat paper-cutout tokens that hop and flip like a paper diorama. Drag to orbit, scroll to zoom,
+with flat paper-cutout tokens that hop and flip like a paper diorama. The camera follows whoever is
+on turn, watches the dice being thrown (a real rigid-body simulation whose result matches the roll),
+and tracks the token to its landing space. Drag to look around freely, use Follow / Overview / Top,
 or switch to the flat 2D board with the button in the log panel. Two ways to play:
 
 - **Single player** against 1 to 5 computer opponents: open `release/paper-tycoon-solo.html`
@@ -62,6 +64,6 @@ npm start         # build and run
 - `src/engine` – pure, deterministic rules engine (no dependencies)
 - `src/shared` – board data, cards, types, wire protocol
 - `src/server` – Node WebSocket server: rooms, lobby, reconnects, turn timer
-- `src/client` – browser client: 3D board (Three.js, `ui/board3d.ts`), flat board, dialogs, paper-craft SVG art
+- `src/client` – browser client: 3D board and camera director (Three.js, `ui/board3d.ts`), dice physics (cannon-es, `ui/dicephysics.ts`), flat board, dialogs, paper-craft SVG art
 - `src/engine/bot.ts` – the computer player
 - `src/client/single.ts` + `local.ts` – single-player entry point and in-browser game loop
