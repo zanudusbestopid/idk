@@ -29,6 +29,53 @@ export function sheetImage(name: string, img: CanvasImageSource, w: number, h: n
 const rgb = (r: number, g: number, b: number): number => (r << 16) | (g << 8) | b;
 const NUDGE = [0, -1, 1, -2, 2, -3, 3];
 
+/**
+ * Guess a sheet's background/key colours: the top-left pixel, plus any colour covering at least
+ * 5% of the sheet that is not a grey (greys and black are sprite outlines). Only for gridded sheets.
+ */
+export function autoKeys(s: SheetImage): Set<number> {
+  const keys = new Set<number>();
+  if (s.px[3] === 255) keys.add(rgb(s.px[0], s.px[1], s.px[2]));
+  if (!s.grid) return keys;
+  const counts = new Map<number, number>();
+  const n = s.w * s.h;
+  const step = n > 400_000 ? 2 : 1; // sample every other pixel on big sheets
+  let seen = 0;
+  for (let i = 0; i < n; i += step) {
+    const o = i * 4;
+    if (s.px[o + 3] === 0) continue;
+    const c = rgb(s.px[o], s.px[o + 1], s.px[o + 2]);
+    counts.set(c, (counts.get(c) ?? 0) + 1);
+    seen++;
+  }
+  for (const [c, cnt] of counts) {
+    if (cnt < seen * 0.05) continue;
+    const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const sat = max ? (max - min) / max : 0;
+    if (sat >= 0.15) keys.add(c);
+  }
+  return keys;
+}
+
+/** Make pixels transparent by flooding from `seeds` (pixel indices) through 4-connected pixels whose colour passes `through`. */
+export function floodErase(id: ImageData, seeds: number[], through: (col: number) => boolean): void {
+  const { width: w, height: hgt, data: d } = id;
+  const stack = seeds.slice();
+  while (stack.length) {
+    const i = stack.pop()!;
+    const o = i * 4;
+    if (d[o + 3] === 0) continue;
+    if (!through(rgb(d[o], d[o + 1], d[o + 2]))) continue;
+    d[o + 3] = 0;
+    const x = i % w, y = (i - x) / w;
+    if (x > 0) stack.push(i - 1);
+    if (x < w - 1) stack.push(i + 1);
+    if (y > 0) stack.push(i - w);
+    if (y < hgt - 1) stack.push(i + w);
+  }
+}
+
 function numInput(value: number, step: number, width: number, onChange: (v: number) => void): HTMLInputElement {
   const i = h('input', { type: 'number', step: String(step), value: String(value), style: { width: `${width}px` } });
   i.addEventListener('input', () => { const v = Number(i.value); if (Number.isFinite(v)) onChange(v); });
@@ -45,8 +92,16 @@ export class SheetView {
   degap = true;
   trim = false;
   keys = new Set<number>();
+  /** Flood the background away from the cut's edges (key colours plus the colours found around the selection). */
+  autoBg = true;
+  /** Wand clicks on the preview: erase the contiguous colour region at these cut pixels. */
+  edits: { x: number; y: number }[] = [];
   sel: Rect | null = null;
   cut: Cut | null = null;
+  /** The cut before trimming (what preview clicks refer to). */
+  private raw: HTMLCanvasElement | null = null;
+  private trimOff = { x: 0, y: 0 };
+  private previewScale = 1;
   onCut: (cut: Cut | null) => void = () => {};
   onMessage: (text: string, kind?: 'info' | 'error') => void = () => {};
 
@@ -88,6 +143,13 @@ export class SheetView {
     degapIn.addEventListener('change', () => { this.degap = degapIn.checked; this.rebuild(); });
     const trimIn = h('input', { type: 'checkbox', checked: this.trim });
     trimIn.addEventListener('change', () => { this.trim = trimIn.checked; this.rebuild(); });
+    const autoBgIn = h('input', { type: 'checkbox', checked: this.autoBg });
+    autoBgIn.addEventListener('change', () => { this.autoBg = autoBgIn.checked; this.rebuild(); });
+    this.preview.style.cursor = 'crosshair';
+    this.preview.title = 'Click a colour to erase that patch · shift+click: make the colour transparent everywhere';
+    this.preview.addEventListener('pointerdown', (e) => this.previewClick(e));
+    this.preview.addEventListener('contextmenu', (e) => e.preventDefault());
+    const resetEdits = h('button', { class: 'btn btn--sm', type: 'button', title: 'Undo the wand clicks on this cut', onClick: () => { this.edits = []; this.rebuild(); } }, 'Reset wand');
     const fileIn = h('input', { type: 'file', accept: 'image/png,image/gif,image/webp,image/bmp', style: { display: 'none' } });
     fileIn.addEventListener('change', async () => {
       const f = fileIn.files?.[0];
@@ -108,7 +170,8 @@ export class SheetView {
       h('div', { class: 'arted__row' },
         h('label', null, 'Zoom'), this.zoomIn, this.zoomLabel, this.snapSel,
         h('label', { class: 'arted__check', title: 'Reassemble multi-tile cuts without the gaps between tiles' }, degapIn, ' no gaps'),
-        h('label', { class: 'arted__check', title: 'Crop transparent edges off the cut' }, trimIn, ' trim')),
+        h('label', { class: 'arted__check', title: 'Crop transparent edges off the cut' }, trimIn, ' trim'),
+        h('label', { class: 'arted__check', title: 'Flood the background away from the edges of the cut: the key colours and whatever colour surrounds the selection on the sheet' }, autoBgIn, ' auto background')),
       h('div', { class: 'arted__row' },
         h('label', null, 'Grid'), h('span', { class: 'muted small' }, 'pitch'), this.pitchIn,
         h('span', { class: 'muted small' }, 'tile'), this.tileIn,
@@ -126,7 +189,10 @@ export class SheetView {
           nudgeBtn('▲', 'move up (↑)', 0, -1, 0, 0), nudgeBtn('▼', 'move down (↓)', 0, 1, 0, 0),
           nudgeBtn('−w', 'narrower (shift+←)', 0, 0, -1, 0), nudgeBtn('+w', 'wider (shift+→)', 0, 0, 1, 0),
           nudgeBtn('−h', 'shorter (shift+↑)', 0, 0, 0, -1), nudgeBtn('+h', 'taller (shift+↓)', 0, 0, 0, 1))),
-      h('div', { class: 'arted__row arted__row--preview' }, this.preview, this.previewInfo));
+      h('div', { class: 'arted__row arted__row--preview' }, this.preview,
+        h('div', { class: 'arted__previewside' }, this.previewInfo,
+          h('span', { class: 'arted__hint' }, 'Background left over? Click it in the preview to erase that patch, or shift+click to make the colour transparent everywhere.'),
+          resetEdits)));
     this.bindPointer();
     this.renderKeys();
     this.renderPreview();
@@ -146,9 +212,8 @@ export class SheetView {
   }
   useSource(s: SheetImage | null): void {
     this.source = s;
-    this.sel = null; this.hover = null;
-    this.keys = new Set<number>();
-    if (s && s.px[3] === 255) this.keys.add(rgb(s.px[0], s.px[1], s.px[2])); // a solid sheet background is usually the key
+    this.sel = null; this.hover = null; this.edits = [];
+    this.keys = s ? autoKeys(s) : new Set<number>();
     this.snap = s && !s.grid ? 'off' : 'auto';
     this.snapSel.value = this.snap;
     this.renderSources();
@@ -258,6 +323,7 @@ export class SheetView {
   }
   setSelection(r: Rect | null): void {
     this.sel = r ? this.clampSel(r) : null;
+    this.edits = [];
     this.paint(); this.renderSelFields(); this.rebuild();
   }
   private editSel(patch: Partial<Rect>): void { if (this.sel) this.setSelection({ ...this.sel, ...patch }); }
@@ -292,24 +358,73 @@ export class SheetView {
       out.width = b.x + this.tile - a.x; out.height = b.y + this.tile - a.y;
       octx.drawImage(src.img, a.x, a.y, out.width, out.height, 0, 0, out.width, out.height);
     }
-    if (this.keys.size) {
-      const id = octx.getImageData(0, 0, out.width, out.height);
-      const d = id.data;
-      for (let i = 0; i < d.length; i += 4) if (this.keys.has(rgb(d[i], d[i + 1], d[i + 2]))) d[i + 3] = 0;
-      octx.putImageData(id, 0, 0);
+    const id = octx.getImageData(0, 0, out.width, out.height);
+    const d = id.data;
+    if (this.keys.size) for (let i = 0; i < d.length; i += 4) if (this.keys.has(rgb(d[i], d[i + 1], d[i + 2]))) d[i + 3] = 0;
+    if (this.autoBg) {
+      const bg = new Set<number>([...this.keys, ...this.ringColours()]);
+      if (bg.size) {
+        const seeds: number[] = [];
+        for (let x = 0; x < out.width; x++) { seeds.push(x, (out.height - 1) * out.width + x); }
+        for (let y = 0; y < out.height; y++) { seeds.push(y * out.width, y * out.width + out.width - 1); }
+        floodErase(id, seeds, (col) => bg.has(col));
+      }
     }
+    for (const e of this.edits) {
+      if (e.x < 0 || e.y < 0 || e.x >= out.width || e.y >= out.height) continue;
+      const i = (e.y * out.width + e.x) * 4;
+      if (d[i + 3] === 0) continue;
+      const target = rgb(d[i], d[i + 1], d[i + 2]);
+      floodErase(id, [e.y * out.width + e.x], (col) => col === target);
+    }
+    octx.putImageData(id, 0, 0);
+    this.raw = out;
+    this.trimOff = { x: 0, y: 0 };
     let canvas = out;
     if (this.trim) {
-      const d = octx.getImageData(0, 0, out.width, out.height).data;
       let x0 = out.width, y0 = out.height, x1 = -1, y1 = -1;
       for (let y = 0; y < out.height; y++) for (let x = 0; x < out.width; x++) if (d[(y * out.width + x) * 4 + 3] > 0) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
       if (x1 >= x0 && y1 >= y0 && (x0 > 0 || y0 > 0 || x1 < out.width - 1 || y1 < out.height - 1)) {
         canvas = document.createElement('canvas');
         canvas.width = x1 - x0 + 1; canvas.height = y1 - y0 + 1;
         canvas.getContext('2d')!.drawImage(out, x0, y0, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+        this.trimOff = { x: x0, y: y0 };
       }
     }
     return { canvas, cols, rows, rect: { ...sel }, source: src.name };
+  }
+  /** The colours that surround the selection on the sheet (gutter, page background): background by definition. */
+  private ringColours(): Set<number> {
+    const src = this.source, s = this.sel;
+    const out = new Set<number>();
+    if (!src || !s) return out;
+    const counts = new Map<number, number>();
+    let total = 0;
+    const add = (x: number, y: number) => {
+      if (x < 0 || y < 0 || x >= src.w || y >= src.h) return;
+      const i = (y * src.w + x) * 4;
+      if (src.px[i + 3] === 0) return;
+      const c = rgb(src.px[i], src.px[i + 1], src.px[i + 2]);
+      counts.set(c, (counts.get(c) ?? 0) + 1);
+      total++;
+    };
+    for (let x = s.x - 1; x <= s.x + s.w; x++) { add(x, s.y - 1); add(x, s.y + s.h); }
+    for (let y = s.y; y < s.y + s.h; y++) { add(s.x - 1, y); add(s.x + s.w, y); }
+    for (const [c, n] of counts) if (n >= total * 0.15) out.add(c); // only the colours that dominate the surround
+    return out;
+  }
+  private previewClick(e: PointerEvent): void {
+    const raw = this.raw;
+    if (!raw || !this.cut || e.button !== 0) return;
+    const r = this.preview.getBoundingClientRect();
+    const x = Math.floor((e.clientX - r.left) / this.previewScale) + this.trimOff.x;
+    const y = Math.floor((e.clientY - r.top) / this.previewScale) + this.trimOff.y;
+    if (x < 0 || y < 0 || x >= raw.width || y >= raw.height) return;
+    const px = raw.getContext('2d')!.getImageData(x, y, 1, 1).data;
+    if (px[3] === 0) return;
+    if (e.shiftKey) { this.keys.add(rgb(px[0], px[1], px[2])); this.renderKeys(); }
+    else this.edits.push({ x, y });
+    this.rebuild();
   }
   private rebuild(): void {
     this.cut = this.buildCut();
@@ -320,12 +435,13 @@ export class SheetView {
     const ctx = this.preview.getContext('2d')!;
     const c = this.cut;
     if (!c) { this.preview.width = 48; this.preview.height = 48; ctx.clearRect(0, 0, 48, 48); this.previewInfo.textContent = 'nothing selected'; return; }
-    const s = Math.max(1, Math.min(6, Math.floor(160 / Math.max(c.canvas.width, c.canvas.height))));
+    const s = Math.max(1, Math.min(8, Math.floor(220 / Math.max(c.canvas.width, c.canvas.height))));
+    this.previewScale = s;
     this.preview.width = c.canvas.width * s; this.preview.height = c.canvas.height * s;
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, this.preview.width, this.preview.height);
     ctx.drawImage(c.canvas, 0, 0, this.preview.width, this.preview.height);
-    this.previewInfo.textContent = `${c.canvas.width}×${c.canvas.height} px` + (this.onTileGrid() ? ` · ${c.cols}×${c.rows} tiles` : ' · free cut') + ` · shown ${s}×`;
+    this.previewInfo.textContent = `${c.canvas.width}×${c.canvas.height} px` + (this.onTileGrid() ? ` · ${c.cols}×${c.rows} tiles` : ' · free cut') + ` · shown ${s}×` + (this.edits.length ? ` · ${this.edits.length} wand edit${this.edits.length === 1 ? '' : 's'}` : '');
   }
 
   // ---------- keys ----------
@@ -401,6 +517,7 @@ export class SheetView {
       }
       this.drag = p;
       this.sel = this.selFromDrag(p, p);
+      this.edits = [];
       c.setPointerCapture(e.pointerId);
       this.paint();
       this.renderSelFields();

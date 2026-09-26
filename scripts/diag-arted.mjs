@@ -44,13 +44,69 @@ console.log('after shift+right (w):', (await numFields())[6]);
 await page.keyboard.press('Shift+ArrowLeft'); await page.waitForTimeout(150);
 await page.screenshot({ path: 'shots/arted-1-sheet.png' });
 
+console.log('auto keys on smb1:', await page.locator('.arted__swatch').count());
+
+// SMB3 sheet: free selection of the ? block; auto keys + auto background must clear the cyan corners
+await page.selectOption('.sheetview select >> nth=0', { label: 'smb3-tiles.png (924×1173)' });
+await page.waitForTimeout(400);
+console.log('auto keys on smb3:', await page.$$eval('.arted__swatch', (bs) => bs.map((b) => b.title.split(' ')[0])));
+await page.selectOption('.sheetview select >> nth=1', 'off');
+await page.$eval('.sheetview input[type=range]', (el) => { el.value = '1'; el.dispatchEvent(new Event('input')); }); // zoom 1× so x=325 is on screen
+await page.waitForTimeout(200);
+const box3 = await canvas.boundingBox();
+const p3 = (x, y) => [box3.x + x + 0.5, box3.y + y + 0.5];
+await page.mouse.move(...p3(325, 14)); await page.mouse.down(); await page.mouse.move(...p3(340, 29), { steps: 4 }); await page.mouse.up();
+await page.waitForTimeout(300);
+console.log('smb3 free cut:', await page.textContent('.arted__row--preview .muted'));
+const alphas = await page.$eval('.arted__preview', (c) => { const ctx = c.getContext('2d'); const s = c.width / 16; const at = (x, y) => ctx.getImageData(Math.floor(x * s + s / 2), Math.floor(y * s + s / 2), 1, 1).data[3]; return { corner: at(0, 0), corner2: at(15, 15), middle: at(8, 8), edgeMid: at(8, 0) }; });
+console.log('cut alphas (corners should be 0, middle 255):', JSON.stringify(alphas));
+// wand: click the middle pixel of the preview → erases that colour patch
+const pv = await page.locator('.arted__preview').boundingBox();
+await page.mouse.click(pv.x + pv.width / 2, pv.y + pv.height / 2);
+await page.waitForTimeout(200);
+const afterWand = await page.$eval('.arted__preview', (c) => c.getContext('2d').getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data[3]);
+console.log('middle after wand click:', afterWand, '·', await page.textContent('.arted__row--preview .muted'));
+await page.click('.sheetview button:has-text("Reset wand")');
+await page.waitForTimeout(200);
+await page.screenshot({ path: 'shots/arted-8-smb3cut.png' });
+
+// Compose tab: stamp the ? block twice side by side, use it, then save it
+await page.click('.arted__tabs button:has-text("Compose")');
+await page.waitForTimeout(400);
+const comp = await page.locator('.composer__canvas').boundingBox();
+const cz = comp.width / (6 * 16);
+await page.mouse.click(comp.x + 8 * cz, comp.y + 8 * cz);
+await page.click('.composer button:has-text("Flip ↔")');
+await page.mouse.click(comp.x + (16 + 8) * cz, comp.y + 8 * cz);
+await page.mouse.click(comp.x + (32 + 8) * cz, comp.y + 8 * cz, { button: 'right' });
+await page.waitForTimeout(200);
+console.log('composer info:', await page.textContent('.composer .arted__row:nth-of-type(3) .muted'));
+await page.screenshot({ path: 'shots/arted-9-compose.png' });
+await page.click('.composer button:has-text("Use as current art")');
+await page.waitForTimeout(200);
+console.log('chip after compose:', await page.textContent('.arted__chip'));
+await page.fill('.composer input[type=text]', 'combo');
+await page.click('.composer button:has-text("Save sprite")');
+await page.waitForTimeout(500);
+console.log('sprites after compose save:', Object.keys((await saved()).sprites ?? {}), 'chip:', await page.textContent('.arted__chip'));
+
+// back to the SMB1 sheet for the rest of the run
+await page.click('.arted__tabs button:has-text("Sheet")');
+await page.waitForTimeout(400);
+await page.selectOption('.sheetview select >> nth=0', { label: 'smb1-tiles.png (669×515)' });
+await page.$eval('.sheetview input[type=range]', (el) => { el.value = '3'; el.dispatchEvent(new Event('input')); });
+await page.waitForTimeout(300);
+const box1 = await canvas.boundingBox();
+const q = (c, r) => [box1.x + (1 + 17 * c + 8) * zoom, box1.y + (1 + 17 * r + 8) * zoom];
+await page.mouse.move(...q(2, 1)); await page.mouse.down(); await page.mouse.move(...q(4, 2), { steps: 4 }); await page.mouse.up();
+await page.waitForTimeout(300);
 await page.fill('.arted input[list="arted-names"]', 'test_block');
 await page.click('button:has-text("Save sprite")');
 await page.waitForTimeout(500);
 console.log('sprites after save:', Object.keys((await saved()).sprites ?? {}), 'chip:', await page.textContent('.arted__chip'));
+await page.click('.arted__tabs button:has-text("Sprites")'); // filter below expects the test sprite
 
 // Sprites tab: the new sprite is listed and can be picked
-await page.click('.arted__tabs button:has-text("Sprites")');
 await page.waitForTimeout(300);
 await page.fill('.arted__tab input[type=text]', 'test');
 await page.waitForTimeout(150);

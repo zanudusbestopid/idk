@@ -7,8 +7,9 @@ import { packImage, sheetSources, spriteCanvas, spriteNames } from '../art/pack.
 import { applyArt, art, exportArt, importArt, isOverridden, removeArtSprite, resetArt, saveArt, setArtSprite, setProps, setSpaceArt, type PropDef, type SpaceArt } from '../art/overrides.js';
 import { BOARD_HALF, propImage, type Board3D } from './board3d.js';
 import { SheetView, decodeImage, sheetImage, type Cut, type SheetImage } from './sheetview.js';
+import { Composer } from './composer.js';
 
-type Tab = 'sheet' | 'sprites' | 'spaces' | 'scenery' | 'slots';
+type Tab = 'sheet' | 'compose' | 'sprites' | 'spaces' | 'scenery' | 'slots';
 interface Current { kind: 'cut' | 'sprite'; name: string; canvas: HTMLCanvasElement; info: string }
 
 /** Named sprites the board draws directly, so replacing them re-skins that part of the game. */
@@ -138,6 +139,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
   function setCurrent(c: Current | null): void {
     current = c;
     for (const b of useButtons) { b.disabled = !c; b.title = c ? `Use ${c.info}` : 'Nothing selected yet: cut something on the Sheet tab or pick a sprite'; }
+    composer.setStamp(c?.canvas ?? null, c ? (c.kind === 'cut' ? c.info : c.name) : '');
     updateBar();
   }
   function setCurrentSprite(name: string): void {
@@ -209,6 +211,28 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
       h('div', { class: 'arted__row' }, nameInput, nameList, saveBtn, h('span', { class: 'muted small' }, 'or use the cut straight from the other tabs')),
       recentRow);
     requestAnimationFrame(() => sheet.layout());
+    return el;
+  }
+
+  // ---------- compose tab ----------
+  const composer = new Composer();
+  composer.onMessage = (t, k) => toast(t, k);
+  composer.onResult = (c) => setCurrent({ kind: 'cut', name: '', canvas: c, info: `composition ${c.width}×${c.height}` });
+  composer.onSave = (name, c) => {
+    snapshot();
+    setArtSprite(name, c);
+    if (!recent.includes(name)) recent.unshift(name);
+    recent.splice(10);
+    thumbCache.delete(name);
+    setCurrentSprite(name);
+    afterArt();
+    toast(`Saved sprite “${name}” (${c.width}×${c.height}).`);
+  };
+  function composeTab(): HTMLElement {
+    const el = h('div', { class: 'arted__tab arted__tab--scroll' },
+      h('p', { class: 'arted__hint' }, 'Connect tiles into one sprite: stamp the current art into the grid cell by cell (flip it for the other side of a hill), then use the result or save it.'),
+      composer.el);
+    requestAnimationFrame(() => composer.draw());
     return el;
   }
 
@@ -579,13 +603,13 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     clear(body);
     if (tab !== 'scenery') { moveMode = false; tableDrag = false; board?.markProp(null); }
     board?.setSpaceClick(tab === 'spaces' ? (i) => { spaceIdx = i; renderTab(); } : () => {});
-    body.appendChild(tab === 'sheet' ? sheetTab() : tab === 'sprites' ? spritesTab() : tab === 'spaces' ? spacesTab() : tab === 'scenery' ? sceneryTab() : slotsTab());
+    body.appendChild(tab === 'sheet' ? sheetTab() : tab === 'compose' ? composeTab() : tab === 'sprites' ? spritesTab() : tab === 'spaces' ? spacesTab() : tab === 'scenery' ? sceneryTab() : slotsTab());
     for (const [t, b] of tabBtns) b.classList.toggle('btn--blue', t === tab);
     setCurrent(current);
     const mine = Object.keys(art.sprites).length, spaces = Object.keys(art.spaces).length;
     foot.textContent = `${mine} sprite${mine === 1 ? '' : 's'} of yours · ${spaces} space${spaces === 1 ? '' : 's'} customised · scenery: ${art.props ? `${art.props.length} props (custom)` : 'default layout'} · saved in this browser`;
   }
-  const tabs = ([['sheet', 'Sheet'], ['sprites', 'Sprites'], ['spaces', 'Spaces'], ['scenery', 'Scenery'], ['slots', 'Slots']] as [Tab, string][]).map(([t, label]) => {
+  const tabs = ([['sheet', 'Sheet'], ['compose', 'Compose'], ['sprites', 'Sprites'], ['spaces', 'Spaces'], ['scenery', 'Scenery'], ['slots', 'Slots']] as [Tab, string][]).map(([t, label]) => {
     const b = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { tab = t; renderTab(); } }, label);
     tabBtns.set(t, b);
     return b;
@@ -619,6 +643,8 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     h('b', null, 'How it works'),
     h('ol', null,
       h('li', null, h('b', null, 'Sheet'), ': drag over the tiles you want. The grid snaps a whole tile at a time and lines each tile up with the gaps around it, so nothing is cut off. Save it under a name, or just leave it as the current art.'),
+      h('li', null, h('b', null, 'Background'), ': the key colours and whatever surrounds the selection are flooded away from the edges (“auto background”). Anything left over: click it in the preview to erase that patch, shift+click to make the colour transparent everywhere.'),
+      h('li', null, h('b', null, 'Compose'), ': stamp the current art into a grid cell by cell to connect tiles into one bigger sprite (flip it for mirrored pieces), then use or save the result.'),
       h('li', null, h('b', null, 'Sprites'), ': every sprite in the pack and every one you made. Click one to make it the current art.'),
       h('li', null, h('b', null, 'Spaces'), ': click a space on the mini board (or on the 3D board) and give it a ground strip and a decoration with “← use”.'),
       h('li', null, h('b', null, 'Scenery'), ': the hills, pipes and clouds around the table. Drag them on the map, or turn on “Move on table” and drag on the 3D table.'),
