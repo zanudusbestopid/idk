@@ -1,10 +1,12 @@
 import './styles.css';
+import './styles-online.css';
 import type { ServerMessage } from '../shared/protocol.js';
 import { PAPER_DEFS } from './art/paper.js';
 import { unlockAudio } from './audio.js';
-import { h, toast } from './dom.js';
+import { h, clear, toast } from './dom.js';
 import { Net } from './net.js';
 import { Store, loadSession, saveSession } from './store.js';
+import { TitleScene, homePlayers, roomPlayers } from './title.js';
 import { GameScreen } from './ui/game.js';
 import { renderHome } from './ui/home.js';
 import { LobbyScreen } from './ui/lobby.js';
@@ -17,30 +19,55 @@ const store = new Store();
 const net = new Net();
 let lobby: LobbyScreen | null = null;
 let game: GameScreen | null = null;
+let scene: TitleScene | null = null;
 let currentCode: string | null = null;
 
 const pathCode = location.pathname.replace(/^\//, '').toUpperCase();
 const prefill = /^[A-Z0-9]{4}$/.test(pathCode) ? pathCode : '';
 
+/** Fresh title scene (3D board with the cinematic camera, when available) plus the layer the menu renders into. */
+function openTitle(): HTMLElement {
+  scene?.destroy(); scene = null;
+  clear(app);
+  scene = new TitleScene(app);
+  const layer = h('div', { class: 'title-layer' });
+  app.appendChild(layer);
+  return layer;
+}
+
+/** Animate the menu layer away over the game screen that replaces it, then drop it. */
+function leaveTitle(): void {
+  const layer = app.querySelector<HTMLElement>('.title-layer');
+  if (!layer) return;
+  document.body.appendChild(layer);
+  layer.classList.add('is-leaving');
+  setTimeout(() => layer.remove(), 500);
+}
+
 function showHome(): void {
   game?.destroy(); game = null; lobby = null;
   store.set({ screen: 'home', room: null, game: null, playerId: null });
-  renderHome(app, {
+  const layer = openTitle();
+  renderHome(layer, {
     onCreate: (name, token) => net.send({ t: 'create', name, token }),
     onJoin: (code, name, token) => net.send({ t: 'join', code, name, token }),
+    onPreview: (name, token) => scene?.show(homePlayers(name, token)),
   }, prefill);
 }
 
 function showLobby(): void {
   game?.destroy(); game = null;
   store.set({ screen: 'lobby', game: null });
-  lobby = new LobbyScreen(app, {
+  const layer = openTitle();
+  layer.classList.add('title-layer--lobby');
+  lobby = new LobbyScreen(layer, {
     onSetToken: (token) => net.send({ t: 'setToken', token }),
     onSetName: (name) => net.send({ t: 'setName', name }),
     onSetConfig: (config) => net.send({ t: 'setConfig', config }),
     onKick: (playerId) => { if (confirm('Remove this player?')) net.send({ t: 'kick', playerId }); },
     onStart: () => net.send({ t: 'start' }),
     onLeave: () => leave(),
+    onPreview: (players, config) => scene?.show(roomPlayers(players), config),
   });
   if (store.state.room && store.state.playerId) lobby.update(store.state.room, store.state.playerId);
 }
@@ -48,14 +75,19 @@ function showLobby(): void {
 function showGame(): void {
   lobby = null;
   store.set({ screen: 'game' });
+  // Take the title scene's board with us so the camera flies from the title shot into the game.
+  const adopted = scene?.adopt();
+  scene?.destroy(); scene = null;
+  leaveTitle();
   game = new GameScreen(app, store.state.playerId!, {
     send: (action) => net.send({ t: 'action', action }),
     chat: (text) => net.send({ t: 'chat', text }),
     leave: () => leave(),
     restart: () => net.send({ t: 'restart' }),
-  });
+  }, { board: adopted });
   if (store.state.room) game.setRoom(store.state.room);
   for (const m of store.state.chat) game.addChat(m);
+  adopted?.setMode('follow');
 }
 
 function leave(): void {
@@ -76,7 +108,10 @@ net.on((msg: ServerMessage) => {
       currentCode = msg.room.code;
       saveSession(msg.session, msg.room.code);
       history.replaceState(null, '', `/${msg.room.code}`);
-      if (msg.room.status === 'lobby') showLobby();
+      if (msg.room.status === 'lobby') {
+        // A rejoin while already waiting keeps the scene; anything else starts a fresh one.
+        if (store.state.screen === 'lobby' && lobby) lobby.update(msg.room, msg.playerId); else showLobby();
+      }
       else if (store.state.screen !== 'game') showGame();
       else game?.setRoom(msg.room);
       return;

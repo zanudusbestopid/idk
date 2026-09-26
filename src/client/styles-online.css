@@ -1,0 +1,36 @@
+/* ===== Online build: home screen and lobby floating over the title scene ===== */
+/* The layout, hero, card and animations come from styles.css (.title-scene, .title-layer,
+   .title-hero, .setup-card). This file only adapts the online cards to that frame. */
+
+.title-layer--lobby { grid-template-columns: minmax(0, 1fr) minmax(320px, 580px); }
+.title-layer.is-leaving > * { pointer-events: none; }
+
+/* --- home card (create / join) --- */
+.setup-card.home { width: auto; }
+.setup-card.home .or { text-align: center; margin: 2px 0 6px; font-weight: 700; color: var(--ink-soft); }
+.setup-card.home .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+.setup-card.home .row .field { margin-bottom: 0; animation: none; }
+.setup-card.home .field--start { margin-top: 0; }
+
+/* --- lobby card --- */
+.setup-card.lobby { display: block; width: auto; padding: 18px 20px 20px; }
+.setup-card.lobby .code-box { margin-bottom: 8px; }
+.setup-card.lobby .code { font-size: 2em; }
+.setup-card.lobby .players { max-height: 34vh; overflow: auto; padding: 2px; }
+.setup-card.lobby .token-grid { grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.setup-card.lobby .token-pick { padding: 4px 2px 2px; }
+.setup-card.lobby .token-pick svg { width: 34px; height: 34px; }
+.setup-card.lobby .token-pick .name { display: none; }
+.setup-card.lobby .actions { margin-top: 0; padding: 0; min-height: 0; align-items: center; }
+.setup-card.lobby .hint { margin-top: 8px; }
+.setup-card.lobby .rules-fold .rule input[type=number], .setup-card.lobby .rules-fold .rule select { width: 6.5em; }
+
+@media (max-width: 860px) {
+  .title-layer--lobby { grid-template-columns: 1fr; }
+  .setup-card.lobby .players { max-height: none; overflow: visible; }
+}
+@media (max-width: 480px) {
+  .setup-card.lobby .token-grid { grid-template-columns: repeat(4, 1fr); }
+  .setup-card.lobby .token-pick svg { width: 40px; height: 40px; }
+  .setup-card.lobby .code { font-size: 1.7em; }
+}

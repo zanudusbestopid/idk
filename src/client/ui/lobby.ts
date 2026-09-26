@@ -1,4 +1,4 @@
-import type { RoomView } from '../../shared/protocol.js';
+import type { LobbyPlayer, RoomView } from '../../shared/protocol.js';
 import type { GameConfig } from '../../shared/types.js';
 import { TOKEN_LIST } from '../../shared/tokens.js';
 import { h, clear, toast } from '../dom.js';
@@ -12,18 +12,23 @@ export interface LobbyHandlers {
   onKick(playerId: string): void;
   onStart(): void;
   onLeave(): void;
+  /** Called on every room update with the people in the room, so the scene behind the card can show them. */
+  onPreview?(players: LobbyPlayer[], config: GameConfig): void;
 }
 
+const idx = (i: number) => ({ '--i': String(i) } as unknown as Record<string, string>);
+
+/** Waiting room: hero title on the left, the lobby card on the right, both floating over the title scene. */
 export class LobbyScreen {
   private root: HTMLElement;
   private handlers: LobbyHandlers;
   private playersEl = h('div', { class: 'players' });
   private tokenGrid = h('div', { class: 'token-grid' });
   private rulesEl = h('div');
-  private startBtn = h('button', { class: 'btn btn--primary btn--lg', type: 'button' }, 'Start game') as HTMLButtonElement;
+  private startBtn = h('button', { class: 'btn btn--primary btn--lg', type: 'button', id: 'lobby-start' }, 'Start game') as HTMLButtonElement;
   private codeEl = h('span', { class: 'code paper paper--flat' });
-  private linkEl = h('input', { class: 'input', readOnly: true, style: { maxWidth: '300px' } }) as HTMLInputElement;
-  private hint = h('div', { class: 'muted small', style: { marginTop: '8px' } });
+  private linkEl = h('input', { class: 'input', readOnly: true }) as HTMLInputElement;
+  private hint = h('div', { class: 'muted small hint' });
   private me: string | null = null;
   private room: RoomView | null = null;
 
@@ -34,19 +39,20 @@ export class LobbyScreen {
     this.startBtn.addEventListener('click', () => handlers.onStart());
     const copyBtn = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => this.copyLink() }, 'Copy invite link');
     const leaveBtn = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => handlers.onLeave() }, 'Leave');
-    const left = h('div', null,
-      h('h1', null, 'Waiting room'),
-      h('div', { class: 'muted small' }, 'Share the code or the link. Friends can join from any browser.'),
-      h('div', { class: 'code-box' }, this.codeEl, copyBtn),
-      this.linkEl,
-      h('h2', { style: { fontSize: '1.1em', margin: '16px 0 6px' } }, 'Players'),
-      this.playersEl,
-      h('div', { class: 'my-token' }, h('span', { style: { fontWeight: '600' } }, 'Your token:'), this.tokenGrid),
-      h('div', { class: 'actions' }, this.startBtn, leaveBtn),
-      this.hint,
+    const rules = h('details', { class: 'rules-fold' },
+      h('summary', null, 'House rules ', h('span', { class: 'muted small' }, '(auctions, Free Parking, starting cash…)')), this.rulesEl);
+
+    const hero = h('div', { class: 'title-hero' },
+      h('h1', { class: 'title-art' }, h('span', null, 'PAPER'), h('span', null, 'TYCOON')),
+      h('p', { class: 'tagline hand' }, 'Waiting room. Share the code or the link; friends can join from any browser.'));
+    const card = h('div', { class: 'setup-card paper lobby' },
+      h('div', { class: 'field', style: idx(0) }, h('label', null, 'Room code'), h('div', { class: 'code-box' }, this.codeEl, copyBtn), this.linkEl),
+      h('div', { class: 'field', style: idx(1) }, h('label', null, 'Players'), this.playersEl),
+      h('div', { class: 'field', style: idx(2) }, h('label', null, 'Your token'), this.tokenGrid),
+      h('div', { class: 'field', style: idx(3) }, rules),
+      h('div', { class: 'field', style: idx(4) }, h('div', { class: 'actions' }, this.startBtn, leaveBtn), this.hint),
     );
-    const right = h('div', { class: 'rules paper paper--flat paper--tilt-r' }, h('h2', null, 'House rules'), this.rulesEl);
-    root.appendChild(h('div', { class: 'screen-center' }, h('div', { class: 'lobby paper' }, left, right)));
+    root.append(hero, card);
   }
 
   private copyLink(): void {
@@ -99,6 +105,7 @@ export class LobbyScreen {
     this.hint.textContent = isHost
       ? (connected < 2 ? 'You need at least 2 players to start.' : `${connected} players ready. Up to ${room.maxPlayers} can join.`)
       : 'Waiting for the host to start the game…';
+    this.handlers.onPreview?.(room.players, room.config);
   }
 
   private renderRules(c: GameConfig, editable: boolean): void {

@@ -6,19 +6,24 @@ import { loadProfile, saveProfile } from '../store.js';
 export interface HomeHandlers {
   onCreate(name: string, token: string): void;
   onJoin(code: string, name: string, token: string): void;
+  /** Called with the current choices whenever the token pick changes, so the scene behind the menu can show it. */
+  onPreview?(name: string, token: string): void;
 }
 
 export function tokenSvg(id: string): string {
   return TOKENS.find((t) => t.id === id)?.svg ?? TOKENS[0].svg;
 }
 
+const idx = (i: number) => ({ '--i': String(i) } as unknown as Record<string, string>);
+
+/** Home screen: hero title on the left, the create/join card on the right, both floating over the title scene. */
 export function renderHome(root: HTMLElement, handlers: HomeHandlers, prefillCode = ''): void {
   clear(root);
   const profile = loadProfile();
   let token = TOKEN_LIST.some((t) => t.id === profile.token) ? profile.token : 'hat';
 
-  const nameInput = h('input', { class: 'input', placeholder: 'Your name', maxLength: 16, value: profile.name, autocomplete: 'off' }) as HTMLInputElement;
-  const codeInput = h('input', { class: 'input input--code', placeholder: 'CODE', maxLength: 4, value: prefillCode, autocomplete: 'off', spellcheck: false }) as HTMLInputElement;
+  const nameInput = h('input', { class: 'input', placeholder: 'Your name', maxLength: 16, value: profile.name, autocomplete: 'off', id: 'home-name' }) as HTMLInputElement;
+  const codeInput = h('input', { class: 'input input--code', placeholder: 'CODE', maxLength: 4, value: prefillCode, autocomplete: 'off', spellcheck: false, id: 'home-code' }) as HTMLInputElement;
 
   const grid = h('div', { class: 'token-grid' });
   const picks = new Map<string, HTMLElement>();
@@ -31,6 +36,7 @@ export function renderHome(root: HTMLElement, handlers: HomeHandlers, prefillCod
   function select(id: string): void {
     token = id;
     for (const [k, el] of picks) el.classList.toggle('is-selected', k === id);
+    handlers.onPreview?.(nameInput.value.trim(), token);
   }
   select(token);
 
@@ -40,8 +46,8 @@ export function renderHome(root: HTMLElement, handlers: HomeHandlers, prefillCod
     return n;
   }
 
-  const createBtn = h('button', { class: 'btn btn--primary btn--lg', type: 'button', onClick: () => handlers.onCreate(nameOrDefault(), token) }, 'Create a room');
-  const joinBtn = h('button', { class: 'btn btn--blue', type: 'button', onClick: () => join() }, 'Join');
+  const createBtn = h('button', { class: 'btn btn--primary btn--lg', type: 'button', id: 'home-create', onClick: () => handlers.onCreate(nameOrDefault(), token) }, 'Create a room');
+  const joinBtn = h('button', { class: 'btn btn--blue', type: 'button', id: 'home-join', onClick: () => join() }, 'Join');
   function join(): void {
     const code = codeInput.value.trim().toUpperCase();
     if (code.length !== 4) { codeInput.focus(); codeInput.classList.add('shake'); return; }
@@ -49,15 +55,17 @@ export function renderHome(root: HTMLElement, handlers: HomeHandlers, prefillCod
   }
   codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
 
-  const card = h('div', { class: 'home paper paper--tilt-l' },
+  const hero = h('div', { class: 'title-hero' },
     h('h1', { class: 'title-art' }, h('span', null, 'PAPER'), h('span', null, 'TYCOON')),
-    h('p', { class: 'subtitle hand' }, 'Buy streets, build houses, bankrupt your friends. All out of paper.'),
-    h('div', { class: 'field' }, h('label', null, 'Your name'), nameInput),
-    h('div', { class: 'field' }, h('label', null, 'Pick a token'), grid),
-    h('div', { style: { textAlign: 'center', marginTop: '6px' } }, createBtn),
-    h('div', { class: 'or' }, '— or join a friend —'),
-    h('div', { class: 'row' }, h('div', { class: 'field', style: { marginBottom: '0' } }, h('label', null, 'Room code'), codeInput), joinBtn),
+    h('p', { class: 'tagline hand' }, 'Buy streets, build houses, bankrupt your friends. All out of paper.'));
+  const card = h('div', { class: 'setup-card paper home' },
+    h('div', { class: 'field', style: idx(0) }, h('label', { for: 'home-name' }, 'Your name'), nameInput),
+    h('div', { class: 'field', style: idx(1) }, h('label', null, 'Pick a token'), grid),
+    h('div', { class: 'field field--start', style: idx(2) }, createBtn),
+    h('div', { class: 'field', style: idx(3) },
+      h('div', { class: 'or' }, '— or join a friend —'),
+      h('div', { class: 'row' }, h('div', { class: 'field' }, h('label', { for: 'home-code' }, 'Room code'), codeInput), joinBtn)),
   );
-  root.appendChild(h('div', { class: 'screen-center' }, card));
+  root.append(hero, card);
   if (prefillCode) nameInput.focus(); else nameInput.focus();
 }
