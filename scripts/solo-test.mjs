@@ -89,7 +89,7 @@ async function act() {
 }
 const start = Date.now();
 let lastTurn = 0, stall = 0, over = false;
-for (let i = 0; i < TURN_LIMIT * 25 && !over; i++) {
+for (let i = 0; i < TURN_LIMIT * 40 && !over; i++) {
   const r = await act();
   if (r === 'over') { over = true; break; }
   const turn = await page.evaluate(() => { const m = document.querySelector('.log')?.textContent?.match(/Turn (\d+)/g); return m ? Number(m[m.length - 1].slice(5)) : 0; }).catch(() => 0);
