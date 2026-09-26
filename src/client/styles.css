@@ -498,13 +498,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .setup-card .bot svg, .lobby .player-row svg { width: 28px; height: 42px; }
 
 /* ----- pixel-art theme (private builds set body[data-theme]) ----- */
-body[data-theme="mario"] {
-  --accent: #e52521; --accent-2: #049cd8; --good: #43b047; --warn: #fbd000;
-  background:
-    repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 8px, transparent 8px 16px),
-    repeating-linear-gradient(0deg, rgba(255,255,255,0.05) 0 8px, transparent 8px 16px),
-    linear-gradient(180deg, #8cc0ff, #5c94fc);
-}
+body[data-theme="mario"] { --accent: #e52521; --accent-2: #049cd8; --good: #43b047; --warn: #fbd000; }
 body[data-theme="mario"] .title-art {
   font-family: "Press Start 2P", var(--font-ui); font-weight: 400; letter-spacing: 0; line-height: 1.3;
   color: #fbd000; -webkit-text-stroke: 0; text-shadow: 4px 4px 0 #161616;
