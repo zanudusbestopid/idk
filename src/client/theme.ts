@@ -25,3 +25,19 @@ export function groupName(group: ColorGroup): string {
 export function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+/**
+ * Themes a reason string the engine attached to a payment or a jailing: card texts
+ * are swapped for the theme's wording, and the classic words for Go and Jail are replaced.
+ */
+export function themeReason(reason: string): string {
+  if (THEME === CLASSIC) return reason;
+  for (const deck of ['chance', 'chest'] as const) {
+    const idx = CLASSIC.cardText[deck].indexOf(reason);
+    if (idx >= 0) return THEME.cardText[deck][idx] ?? reason;
+  }
+  return reason
+    .replace(/Go To Jail/g, T.goToJail)
+    .replace(/\bJail\b/g, T.jail)
+    .replace(/\bGo\b/g, T.go);
+}

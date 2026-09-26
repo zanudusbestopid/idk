@@ -60,12 +60,25 @@ console.log('Built dist/paper-tycoon.js');
 
 // 3. Single-player build: one standalone HTML file, plus the same page in the
 //    form the claude.ai Artifact tool expects (no document skeleton).
-const fonts = '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Patrick+Hand&display=swap" rel="stylesheet">';
+// Fonts are embedded (from the @fontsource packages) so the standalone page needs no network.
+async function fontFace(family, file, weight) {
+  const data = await readFile(`node_modules/@fontsource/${file}`);
+  return `@font-face{font-family:'${family}';font-style:normal;font-weight:${weight};font-display:swap;src:url(data:font/woff2;base64,${data.toString('base64')}) format('woff2');}`;
+}
+const fontCss = (await Promise.all([
+  fontFace('Fredoka', 'fredoka/files/fredoka-latin-400-normal.woff2', 400),
+  fontFace('Fredoka', 'fredoka/files/fredoka-latin-500-normal.woff2', 500),
+  fontFace('Fredoka', 'fredoka/files/fredoka-latin-600-normal.woff2', 600),
+  fontFace('Fredoka', 'fredoka/files/fredoka-latin-700-normal.woff2', 700),
+  fontFace('Patrick Hand', 'patrick-hand/files/patrick-hand-latin-400-normal.woff2', 400),
+  fontFace('Press Start 2P', 'press-start-2p/files/press-start-2p-latin-400-normal.woff2', 400),
+])).join('');
+const fonts = `<style>${fontCss}</style>`;
 const favicon = `<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='6' y='6' width='52' height='52' rx='8' fill='%23fbf3e0' stroke='%232b2118' stroke-width='5'/%3E%3Crect x='6' y='6' width='52' height='14' rx='6' fill='%23d9413a' stroke='%232b2118' stroke-width='5'/%3E%3Ccircle cx='24' cy='40' r='4' fill='%232b2118'/%3E%3Ccircle cx='40' cy='40' r='4' fill='%232b2118'/%3E%3C/svg%3E">`;
 
 async function buildSolo(dir, define, opts = {}) {
   const title = opts.title ?? 'Paper Tycoon';
-  const fontLinks = fonts + (opts.pixelFont ? '<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">' : '');
+  const fontLinks = fonts;
   await mkdir(dir, { recursive: true });
   const solo = await build({
     entryPoints: ['src/client/single.ts'],
@@ -114,6 +127,6 @@ if (process.env.PT_SHEET) {
     __TOKEN_NAMES__: JSON.stringify(names.length === 8 ? names : null),
     __THEME__: JSON.stringify(process.env.PT_THEME ?? null),
     __THEME_PACK__: JSON.stringify(pack),
-  }, { title: process.env.PT_TITLE, pixelFont: !!process.env.PT_THEME });
+  }, { title: process.env.PT_TITLE });
   console.log('Built private dist/private/paper-tycoon-solo.html and dist/private/artifact.html');
 }

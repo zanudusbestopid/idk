@@ -134,8 +134,7 @@ function grassTexture(): THREE.CanvasTexture {
   c.width = 1024; c.height = 1024;
   const ctx = c.getContext('2d')!;
   ctx.fillStyle = '#5cb84a'; ctx.fillRect(0, 0, 1024, 1024);
-  for (let i = 0; i < 260; i++) { ctx.fillStyle = i % 2 ? '#63c24f' : '#55ad44'; ctx.fillRect(Math.floor(Math.random() * 128) * 8, Math.floor(Math.random() * 128) * 8, 8, 8); }
-  for (let i = 0; i < 14; i++) drawSprite(ctx, 'bush', Math.random() * 900, Math.random() * 980, 48 * 2.5, 16 * 2.5);
+  for (let i = 0; i < 12; i++) drawSprite(ctx, 'bush', Math.random() * 900, Math.random() * 980, 48 * 2.5, 16 * 2.5);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.magFilter = THREE.NearestFilter;
@@ -407,7 +406,7 @@ export class Board3D implements BoardView {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.scene.background = new THREE.Color(themed() ? SKY : '#7d4d22');
-    this.scene.fog = new THREE.Fog(themed() ? SKY : '#7d4d22', 30 * K, 60 * K);
+    this.scene.fog = new THREE.Fog(themed() ? SKY : '#7d4d22', themed() ? 48 * K : 30 * K, themed() ? 90 * K : 60 * K);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
     this.camera.position.copy(this.camPos);
@@ -516,7 +515,7 @@ export class Board3D implements BoardView {
     const far = HALF + 3.2;
     mk('hill', -far, 0, -2, 3.2); mk('hill', far + 1, 0, 3, 3.6); mk('hill', 1, 0, -far - 1, 3.4); mk('hill', -3, 0, far + 1.5, 3);
     mk('hill_small', far - 1, 0, -5, 1.6); mk('hill_small', -far + 1, 0, 6, 1.6); mk('castle_big', far + 3, 0, -far, 4.2);
-    mk('cloud_big', -far, 4.5, far, 2); mk('cloud_face', far, 5.2, -far * 0.5, 2); mk('cloud_mid', 0, 6, -far - 2, 1.8); mk('cloud_small', -far * 0.5, 5.5, -far, 1.6); mk('cloud_big', far * 0.7, 4.8, far + 1, 2.2);
+    mk('cloud_big', -far, 4.5, far, 2); mk('cloud_small', far, 5.2, -far * 0.5, 1.6); mk('cloud_mid', 0, 6, -far - 2, 1.8); mk('cloud_small', -far * 0.5, 5.5, -far, 1.6); mk('cloud_big', far * 0.7, 4.8, far + 1, 2.2);
   }
 
   private deckColor(kind: 'chance' | 'chest'): string {
@@ -646,7 +645,7 @@ export class Board3D implements BoardView {
     drawSprite(ctx, 'bush', x0 + 430, y1 - 48 - 48, 48 * 3, 16 * 3);
     drawSprite(ctx, 'bush', x1 - 420, y1 - 48 - 48, 48 * 3, 16 * 3);
     drawSprite(ctx, 'castle_small', x1 - 300, y1 - 48 - 80 * 3, 96 * 3, 80 * 3);
-    drawSprite(ctx, 'cloud_face', x0 + 90, inner + 60, 64 * 4, 16 * 4);
+    drawSprite(ctx, 'cloud_small', x0 + 90, inner + 70, 48 * 4, 16 * 4);
     drawSprite(ctx, 'cloud_big', x1 - 380, inner + 40, 48 * 5, 32 * 5);
     drawSprite(ctx, 'cloud_mid', x0 + 560, inner + 190, 32 * 4, 32 * 4);
     drawSprite(ctx, 'cloud_small', x1 - 700, inner + 120, 48 * 4, 16 * 4);
@@ -671,71 +670,97 @@ export class Board3D implements BoardView {
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
-    const pad = 3, b = 7;
-    const left = -w / 2 + pad, top = -d / 2 + pad, iw = w - 2 * pad, ih = d - 2 * pad;
+    // Panel: black border (adjacent borders merge into the board's grid lines), cream face
+    const b = 5;
+    const left = -w / 2, top = -d / 2, iw = w, ih = d;
     ctx.fillStyle = PIXEL_INK; ctx.fillRect(left, top, iw, ih);
     ctx.fillStyle = '#f9f1dc'; ctx.fillRect(left + b, top + b, iw - 2 * b, ih - 2 * b);
-    // ground strip along the outer edge (lava for the capture corner)
+    // Ground strip along an edge, grass blades toward the inside of the panel
     const gh = 42;
-    const gy = top + ih - b - gh;
-    if (space.type === 'gotojail') { ctx.fillStyle = '#c8321e'; ctx.fillRect(left + b, gy, iw - 2 * b, gh); tileSprite(ctx, 'lava_top', left + b, gy, iw - 2 * b, gh, gh / 16); }
-    else tileSprite(ctx, 'ground_top', left + b, gy, iw - 2 * b, gh, gh / 16);
-    let y = top + b + 10;
-    const textW = iw - 2 * b - 10;
-    if (space.type === 'property') {
-      const bandH = Math.round(d * 0.2);
-      ctx.fillStyle = spaceColor(space); ctx.fillRect(left + b, top + b, iw - 2 * b, bandH);
-      ctx.fillStyle = PIXEL_INK; ctx.fillRect(left + b, top + b + bandH, iw - 2 * b, 5);
-      y = top + b + bandH + 14;
-    }
-    ctx.fillStyle = PIXEL_INK; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const strip = (edge: 'top' | 'bottom' | 'left' | 'right', lava: boolean) => {
+      const len = (edge === 'top' || edge === 'bottom' ? iw : ih) - 2 * b;
+      ctx.save();
+      if (edge === 'bottom') ctx.translate(0, top + ih - b);
+      else if (edge === 'top') { ctx.translate(0, top + b); ctx.rotate(Math.PI); }
+      else if (edge === 'left') { ctx.translate(left + b, 0); ctx.rotate(Math.PI / 2); }
+      else { ctx.translate(left + iw - b, 0); ctx.rotate(-Math.PI / 2); }
+      if (lava) { ctx.fillStyle = '#c8321e'; ctx.fillRect(-len / 2, -gh, len, gh); }
+      tileSprite(ctx, lava ? 'lava_top' : 'ground_top', -len / 2, -gh, len, gh, gh / 16);
+      ctx.restore();
+    };
     const draw = (name: string, x: number, yy: number, sw: number, sh: number) => drawSprite(ctx, name, x, yy, sw, sh);
     const nameOf = () => (space.type === 'jail' ? space.name.split(' / ')[0] : space.name);
+    ctx.fillStyle = PIXEL_INK; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    /** Upper-case pixel text, wrapped, shrunk to fit; returns the y below the last line. */
     const label = (text: string, px: number, yy: number, maxW: number): number => {
       ctx.font = `${px}px ${pixelFont()}`;
       const lines = wrapText(ctx, text.toUpperCase(), maxW);
       let fs = px;
       const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
       if (widest > maxW) { fs = Math.floor(px * maxW / widest); ctx.font = `${fs}px ${pixelFont()}`; }
-      for (const line of lines) { ctx.fillText(line, 0, yy); yy += fs * 1.45; }
+      for (const line of lines) { ctx.fillText(line, 0, yy); yy += fs * 1.5; }
       return yy;
     };
-    const price = (yy: number) => { if (!space.price) return; draw('coin', -34, yy - 2, 22, 22); ctx.font = `17px ${pixelFont()}`; ctx.textAlign = 'left'; ctx.fillText(String(space.price), -8, yy); ctx.textAlign = 'center'; };
     if (corner) {
-      const nameY = top + b + 12;
+      const lava = space.type === 'gotojail';
+      strip(i === 0 || i === 10 ? 'bottom' : 'top', lava);
+      strip(i === 0 || i === 30 ? 'right' : 'left', lava);
+      // Content sits in a diagonal frame whose "up" points at the board's middle, so it reads from outside the corner
+      ctx.save();
+      ctx.beginPath(); ctx.rect(left + b, top + b, iw - 2 * b, ih - 2 * b); ctx.clip();
+      ctx.rotate(i === 0 ? -Math.PI / 4 : i === 10 ? Math.PI / 4 : i === 20 ? 3 * Math.PI / 4 : -3 * Math.PI / 4);
+      const maxW = iw - 2 * b - 30;
       if (space.type === 'go') {
-        label(nameOf(), 30, nameY, iw - 2 * b - 20);
-        ctx.font = `13px ${pixelFont()}`; ctx.fillText('COLLECT 200', 0, nameY + 46);
-        draw('flag_pole', -92, gy - 118, 22, 88); draw('flag_ball', -92, gy - 130, 22, 22); draw('goal_flag', -80, gy - 116, 26, 26);
-        draw('castle_small', -50, gy - 108, 96 * 1.35, 80 * 1.35);
+        const yy = label(nameOf(), 34, -108, maxW);
+        ctx.font = `13px ${pixelFont()}`; ctx.fillText('COLLECT 200', 0, yy + 2);
+        draw('castle_small', -52, 8, 96 * 1.1, 80 * 1.1);
+        draw('flag_pole', -92, 2, 20, 80); draw('flag_ball', -93, -10, 22, 22); draw('goal_flag', -80, 4, 26, 26);
       } else if (space.type === 'jail') {
-        label(nameOf(), 20, nameY, iw - 2 * b - 20);
-        draw('chain_fence', -66, gy - 132, 96 * 1.36, 128 * 1.03);
-        ctx.font = `11px ${pixelFont()}`; ctx.fillText(T.justVisiting.toUpperCase(), 0, gy + 12);
+        const yy = label(nameOf(), 20, -112, maxW);
+        ctx.font = `11px ${pixelFont()}`; ctx.fillText(T.justVisiting.toUpperCase(), 0, yy + 2);
+        draw('chain_fence', -60, -10, 96 * 1.25, 128 * 0.95);
       } else if (space.type === 'freeparking') {
-        label(nameOf(), 22, nameY, iw - 2 * b - 20);
-        draw('cloud_big', -110, gy - 150, 48 * 3, 32 * 3); draw('cloud_small', 10, gy - 190, 48 * 2.2, 16 * 2.2);
-        for (let k = 0; k < 4; k++) draw(k % 2 ? 'coin' : 'coin3', -70 + k * 42, gy - 60, 30, 30);
+        label(nameOf(), 22, -104, maxW);
+        draw('cloud_big', -96, -20, 48 * 2.6, 32 * 2.6); draw('cloud_small', 4, 50, 48 * 2, 16 * 2);
+        for (let k = 0; k < 4; k++) draw(k % 2 ? 'coin' : 'coin3', -62 + k * 40, 8, 30, 30);
       } else {
-        label(nameOf(), 20, nameY, iw - 2 * b - 20);
-        draw('cannon', -88, gy - 148, 16 * 3.1, 48 * 3.1); draw('hard_block_gray', 10, gy - 100, 64, 64); draw('hard_block_gray', 10, gy - 40, 64, 64);
+        label(nameOf(), 20, -112, maxW);
+        draw('cannon', -80, -14, 16 * 3, 48 * 3); draw('hard_block_gray', -6, 44, 56, 56); draw('hard_block_gray', 50, 44, 56, 56); draw('hard_block_gray', 22, -12, 56, 56);
       }
+      ctx.restore();
       ctx.restore();
       return;
     }
+    strip('bottom', false);
+    let y = top + b + 12;
+    const textW = iw - 2 * b - 14;
+    if (space.type === 'property') {
+      const bandH = Math.round(d * 0.2);
+      ctx.fillStyle = spaceColor(space); ctx.fillRect(left + b, top + b, iw - 2 * b, bandH);
+      ctx.fillStyle = PIXEL_INK; ctx.fillRect(left + b, top + b + bandH, iw - 2 * b, 5);
+      y = top + b + bandH + 16;
+    }
     let iconH = 0;
     switch (space.type) {
-      case 'railroad': draw('pipe_top', -30, y, 60, 30); draw('pipe_body', -30, y + 30, 60, 30); iconH = 66; break;
-      case 'utility': draw(i === 12 ? 'qblock' : 'qblock3', -30, y, 60, 60); iconH = 66; break;
-      case 'chance': draw('qblock', -36, y, 72, 72); iconH = 78; break;
-      case 'chest': draw('mushroom_top', -42, y, 84, 28); draw('mushroom_stem', -14, y + 28, 28, 56); iconH = 90; break;
-      case 'tax': draw('coin', -34, y, 30, 30); draw('coin2', 4, y, 30, 30); iconH = 36; break;
+      case 'railroad': draw('pipe_top', -32, y, 64, 32); draw('pipe_body', -32, y + 32, 64, 32); iconH = 72; break;
+      case 'utility': draw(i === 12 ? 'qblock' : 'qblock3', -32, y, 64, 64); iconH = 72; break;
+      case 'chance': draw('qblock', -38, y, 76, 76); iconH = 84; break;
+      case 'chest': draw('mushroom_top', -42, y, 84, 28); draw('mushroom_stem', -14, y + 28, 28, 56); iconH = 92; break;
+      case 'tax': draw('coin', -36, y, 32, 32); draw('coin2', 4, y, 32, 32); iconH = 40; break;
       default: break;
     }
     y += iconH;
-    const after = label(nameOf(), 15, y, textW);
-    if (space.price) price(after + 4);
-    if (space.type === 'tax') { ctx.font = `13px ${pixelFont()}`; ctx.fillText(`PAY ${space.amount}`, 0, after + 6); }
+    ctx.fillStyle = PIXEL_INK;
+    const after = label(nameOf(), 18, y, textW);
+    if (space.price) {
+      const text = String(space.price);
+      ctx.font = `20px ${pixelFont()}`;
+      const tw = ctx.measureText(text).width;
+      const x0 = -(tw + 30) / 2;
+      draw('coin', x0, after + 2, 26, 26);
+      ctx.textAlign = 'left'; ctx.fillText(text, x0 + 30, after + 6); ctx.textAlign = 'center';
+    }
+    if (space.type === 'tax') { ctx.font = `16px ${pixelFont()}`; ctx.fillText(`PAY ${space.amount}`, 0, after + 6); }
     ctx.restore();
   }
 

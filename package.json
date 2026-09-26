@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Paper Tycoon – an online property-trading board game in a paper-craft style",
+  "description": "Paper Tycoon \u2013 an online property-trading board game in a paper-craft style",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
@@ -18,7 +18,10 @@
     "esbuild": "^0.28.2",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.2",
+    "@fontsource/fredoka": "^5.0.0",
+    "@fontsource/patrick-hand": "^5.0.0",
+    "@fontsource/press-start-2p": "^5.0.0"
   },
   "dependencies": {
     "cannon-es": "^0.20.0",

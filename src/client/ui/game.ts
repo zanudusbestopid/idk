@@ -12,7 +12,7 @@ import {
   nameTag, openTradesContent, pauseContent, playerName, showCard, standingsContent,
 } from './dialogs.js';
 import { dur, getSettings } from '../settings.js';
-import { T, cardText, deckName } from '../theme.js';
+import { T, cardText, deckName, themeReason } from '../theme.js';
 import { tokenSvg } from './home.js';
 
 export interface GameHandlers {
@@ -550,7 +550,7 @@ function describeEvent(ev: GameEvent, state: GameState): (string | HTMLElement)[
   switch (ev.type) {
     case 'rolled': return [n(ev.player), ` rolled ${ev.dice[0]} + ${ev.dice[1]}${ev.doubles ? ' (doubles!)' : ''}`];
     case 'moved': return ev.passedGo ? [n(ev.player), ` passed ${T.go} and landed on `, sp(ev.to)] : [n(ev.player), ev.direct ? ' went to ' : ' landed on ', sp(ev.to)];
-    case 'paid': return [n(ev.from), ` paid ${money(ev.amount)} to `, n(ev.to), ev.reason ? ` (${ev.reason})` : ''];
+    case 'paid': return [n(ev.from), ` paid ${money(ev.amount)} to `, n(ev.to), ev.reason ? ` (${themeReason(ev.reason)})` : ''];
     case 'bought': return [n(ev.player), ' bought ', sp(ev.space), ` for ${money(ev.price)}`];
     case 'declined': return [n(ev.player), ' declined to buy ', sp(ev.space)];
     case 'auctionStarted': return ['Auction started for ', sp(ev.space)];
@@ -561,7 +561,7 @@ function describeEvent(ev: GameEvent, state: GameState): (string | HTMLElement)[
     case 'soldHouse': return [n(ev.player), ' sold a building on ', sp(ev.space)];
     case 'mortgaged': return [n(ev.player), ' mortgaged ', sp(ev.space)];
     case 'unmortgaged': return [n(ev.player), ' lifted the mortgage on ', sp(ev.space)];
-    case 'jailed': return [n(ev.player), ` went to ${T.jail} (${ev.reason})`];
+    case 'jailed': return [n(ev.player), ` went to ${T.jail} (${themeReason(ev.reason)})`];
     case 'freed': return [n(ev.player), ev.how === 'doubles' ? ` rolled doubles and left ${T.jail}` : ev.how === 'card' ? ` used a ${T.jailCard}` : ev.how === 'fine' ? ` paid the fine and left ${T.jail}` : ` had to pay and leave ${T.jail}`];
     case 'tradeProposed': return [n(ev.trade.from), ' proposed a trade to ', n(ev.trade.to)];
     case 'tradeAccepted': return [n(ev.trade.to), ' accepted a trade from ', n(ev.trade.from)];

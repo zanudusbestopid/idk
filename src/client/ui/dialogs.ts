@@ -3,11 +3,12 @@ import { GROUPS, RAILROADS, UTILITIES, mortgageValue } from '../../shared/board.
 import type { Action, GameState, Player, Space, Trade, TradeSide } from '../../shared/types.js';
 import { ICONS } from '../art/icons.js';
 import { sfx } from '../audio.js';
+import { spriteCanvas, stackCanvas } from '../art/pack.js';
 import { h, clear, money, sleep } from '../dom.js';
 import { GROUP_COLORS, LIGHT_GROUPS, spaceColor } from './board.js';
 import { tokenSvg } from './home.js';
 import { getSettings, updateSettings } from '../settings.js';
-import { T, THEME, cap, deckName } from '../theme.js';
+import { T, THEME, cap, deckName, themeReason } from '../theme.js';
 
 export type Send = (a: Action) => void;
 
@@ -193,10 +194,17 @@ export class AuctionView {
 
 // ---------- chance / chest card ----------
 
+/** Deck icon for the card popup: the theme pack's sprite when one is loaded, else the paper icon. */
+function cardIcon(deck: 'chance' | 'chest'): HTMLElement {
+  const c = deck === 'chance' ? spriteCanvas('qblock', 3) : stackCanvas(['mushroom_top', 'mushroom_stem'], 3);
+  if (c) { const img = h('img', { src: c.toDataURL(), alt: '', class: 'card-icon' }); return img; }
+  return h('span', { html: deck === 'chance' ? ICONS.chance : ICONS.chest });
+}
+
 export async function showCard(modals: Modals, deck: 'chance' | 'chest', text: string, low = false): Promise<void> {
   sfx.card();
   const content = h('div', { class: `card-pop ${deck}` },
-    h('div', { class: 'card-head' }, h('span', { html: deck === 'chance' ? ICONS.chance : ICONS.chest }), deckName(deck).toUpperCase()),
+    h('div', { class: 'card-head' }, cardIcon(deck), deckName(deck).toUpperCase()),
     h('div', { class: 'card-text hand' }, text),
     h('div', { class: 'muted small', style: { textAlign: 'center', paddingBottom: '10px' } }, 'click to continue'));
   const handle = modals.show('card', content, { dismissible: true });
@@ -297,7 +305,7 @@ export class DebtView {
     const d = state.debt!;
     const me = state.players.find((p) => p.id === meId)!;
     clear(this.text);
-    this.text.append('You owe ', h('b', null, money(d.amount)), ' to ', nameTag(state, d.creditor), ` (${d.reason}). You have `, h('b', null, money(me.cash)), `. Sell ${T.houses} or mortgage properties to raise cash.`);
+    this.text.append('You owe ', h('b', null, money(d.amount)), ' to ', nameTag(state, d.creditor), ` (${themeReason(d.reason)}). You have `, h('b', null, money(me.cash)), `. Sell ${T.houses} or mortgage properties to raise cash.`);
     this.manage.update(state, meId);
     const legal = legalActions(state, meId);
     this.payBtn.disabled = !legal.includes('payDebt');
