@@ -1,0 +1,17 @@
+{
+  "name": "paper-tycoon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Online Monopoly-style board game: pure rules engine, server and client",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}
