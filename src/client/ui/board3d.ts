@@ -545,7 +545,7 @@ export class Board3D implements BoardView {
   /** Hills and clouds around a themed board, as upright cutouts that keep facing the camera. */
   /** Level backdrop walls around the table, plus a few upright cutout props near the board. */
   private addScenery(): void {
-    const D = 30, WALL_H = 9.4; // wall distance and height; the texture's 640px height ↔ WALL_H units
+    const D = 40, WALL_H = 12.5; // wall distance (beyond the camera's reach) and height; the texture's 640px ↔ WALL_H units
     const tex = backdropTexture();
     for (let i = 0; i < 4; i++) {
       const wall = new THREE.Mesh(new THREE.PlaneGeometry(2 * D + 0.2, WALL_H), new THREE.MeshBasicMaterial({ map: tex, fog: false }));
