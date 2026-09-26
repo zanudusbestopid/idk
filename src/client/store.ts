@@ -34,11 +34,13 @@ export const SESSION_KEY = 'pt.session';
 export const PROFILE_KEY = 'pt.profile';
 
 export function saveSession(session: string | null, code: string | null): void {
-  if (session && code) localStorage.setItem(SESSION_KEY, JSON.stringify({ session, code }));
-  else localStorage.removeItem(SESSION_KEY);
+  try {
+    if (session && code) localStorage.setItem(SESSION_KEY, JSON.stringify({ session, code }));
+    else localStorage.removeItem(SESSION_KEY);
+  } catch { /* storage unavailable */ }
 }
 export function loadSession(): { session: string; code: string } | null {
   try { const v = localStorage.getItem(SESSION_KEY); return v ? JSON.parse(v) : null; } catch { return null; }
 }
-export function saveProfile(name: string, token: string): void { localStorage.setItem(PROFILE_KEY, JSON.stringify({ name, token })); }
+export function saveProfile(name: string, token: string): void { try { localStorage.setItem(PROFILE_KEY, JSON.stringify({ name, token })); } catch { /* storage unavailable */ } }
 export function loadProfile(): { name: string; token: string } { try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || '') || { name: '', token: 'hat' }; } catch { return { name: '', token: 'hat' }; } }

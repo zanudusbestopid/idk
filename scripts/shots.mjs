@@ -97,8 +97,8 @@ await p2.fill('.chatform .input', 'gg ez'); await p2.press('.chatform .input', '
 await p1.waitForTimeout(400);
 await p1.screenshot({ path: 'shots/desktop-after.png' });
 // Ben leaves mid-game → Ava wins → standings dialog
-p2.once('dialog', (d) => d.accept());
 await p2.click('.logbox button:has-text("Leave")');
+await p2.click('.dialog button:has-text("Leave")');
 await p1.waitForSelector('.dialog:has-text("wins!")', { timeout: 8000 }).catch(() => errors.push('no game-over dialog'));
 await p1.waitForTimeout(700);
 await p1.screenshot({ path: 'shots/desktop-gameover.png' });

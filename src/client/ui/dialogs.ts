@@ -32,6 +32,16 @@ export class Modals {
   closeAll(except: string[] = []): void { for (const k of [...this.open.keys()]) if (!except.includes(k)) this.close(k); }
 }
 
+/** In-page yes/no question (window.confirm is unavailable in some hosts). */
+export function confirmDialog(modals: Modals, text: string, onYes: () => void, yesLabel = 'Yes', noLabel = 'Cancel'): void {
+  const content = h('div', null,
+    h('p', { style: { fontSize: '1.1em', margin: '4px 0 0' } }, text),
+    h('div', { class: 'buttons' },
+      h('button', { class: 'btn', type: 'button', onClick: () => modals.close('confirm') }, noLabel),
+      h('button', { class: 'btn btn--primary', type: 'button', onClick: () => { modals.close('confirm'); onYes(); } }, yesLabel)));
+  modals.show('confirm', content, { dismissible: true });
+}
+
 // ---------- shared pieces ----------
 
 export function playerName(state: GameState, id: string | null): string {
@@ -271,12 +281,12 @@ export class DebtView {
   private payBtn = h('button', { class: 'btn btn--good btn--lg', type: 'button' }) as HTMLButtonElement;
   private bankruptBtn = h('button', { class: 'btn btn--primary', type: 'button' }) as HTMLButtonElement;
 
-  constructor(send: Send) {
+  constructor(send: Send, modals: Modals) {
     this.manage = new ManageView(send, () => { /* no close in debt */ });
     this.manage.el.querySelector('.buttons')?.remove();
     this.manage.el.querySelector('h2')?.remove();
     this.payBtn.addEventListener('click', () => send({ type: 'payDebt' }));
-    this.bankruptBtn.addEventListener('click', () => { if (confirm('Declare bankruptcy? You will be out of the game.')) send({ type: 'declareBankruptcy' }); });
+    this.bankruptBtn.addEventListener('click', () => confirmDialog(modals, 'Declare bankruptcy? You will be out of the game.', () => send({ type: 'declareBankruptcy' }), 'Declare bankruptcy'));
     this.el.append(h('h2', null, h('span', { class: 'ico', html: ICONS.incometax }), 'You owe money'), this.text, this.manage.el, h('div', { class: 'buttons' }, this.bankruptBtn, this.payBtn));
   }
 
@@ -432,7 +442,7 @@ export function deedViewerContent(state: GameState, index: number, meId: string,
 
 // ---------- standings / game over ----------
 
-export function standingsContent(state: GameState, meId: string, isHost: boolean, onLeave: () => void, onRestart: () => void): HTMLElement {
+export function standingsContent(state: GameState, meId: string, isHost: boolean, onLeave: () => void, onRestart: () => void, restartLabel = 'Back to lobby'): HTMLElement {
   const ranked = [...state.players].map((p) => ({ p, worth: p.bankrupt ? -1 : netWorth(state, p.id) })).sort((a, b) => b.worth - a.worth);
   const winner = state.players.find((p) => p.id === state.winner);
   const rows = ranked.map(({ p, worth }) => h('div', { class: `srow paper paper--flat ${p.id === state.winner ? 'is-winner' : ''}` },
@@ -446,7 +456,7 @@ export function standingsContent(state: GameState, meId: string, isHost: boolean
     h('div', { class: 'standings' }, ...rows),
     h('div', { class: 'buttons' },
       h('button', { class: 'btn', type: 'button', onClick: onLeave }, 'Leave'),
-      isHost ? h('button', { class: 'btn btn--good', type: 'button', onClick: onRestart }, 'Back to lobby') : h('span', { class: 'muted small' }, 'Waiting for the host…')),
+      isHost ? h('button', { class: 'btn btn--good', type: 'button', onClick: onRestart }, restartLabel) : h('span', { class: 'muted small' }, 'Waiting for the host…')),
   );
 }
 

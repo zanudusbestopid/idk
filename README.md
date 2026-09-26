@@ -1,9 +1,22 @@
 # Paper Tycoon
 
-An online property-trading board game in a paper-craft art style, for 2 to 8 players.
-One person runs the server, everyone else joins from a browser. No accounts, no install for players.
+A property-trading board game in a paper-craft art style. Two ways to play:
 
-## Run it (the host)
+- **Single player** against 1 to 5 computer opponents: open `release/paper-tycoon-solo.html`
+  in any browser. Nothing to install. Your game is saved in the browser so you can resume later.
+- **Online** for 2 to 8 friends: one person runs `release/paper-tycoon.js` with Node,
+  everyone else joins from a browser. No accounts, no install for players.
+
+## Single player
+
+Download `release/paper-tycoon-solo.html` and double-click it. Pick your token, choose how many
+computer players you face, set the house rules, and start. The computer players buy sensibly,
+bid in auctions, build on their monopolies, raise cash when they owe money, and occasionally
+offer you a trade for the last street of a set they are collecting.
+
+## Online
+
+### Run it (the host)
 
 You need [Node.js](https://nodejs.org) 18 or newer. The whole game is one file:
 `release/paper-tycoon.js` (server and client bundled together). Download it, then:
@@ -23,7 +36,7 @@ Set a different port with `PORT=8080 node paper-tycoon.js`.
 
 Create a room, send the 4-letter code (or the invite link), and start when everyone is in.
 
-## Rules
+## Rules (both modes)
 
 Classic rules by default: auctions when a player declines to buy, even-build rule, mortgages,
 trades, three ways out of jail, bankruptcy to a player or the bank, and the full 16 + 16 card decks.
@@ -37,9 +50,10 @@ starting cash, jail fine, and a turn timer. Players who disconnect are auto-play
 npm install
 npm test          # rules engine tests
 npm run typecheck
-npm run build     # produces dist/paper-tycoon.js (single file, client embedded)
+npm run build     # dist/paper-tycoon.js (server + client), dist/paper-tycoon-solo.html (single player)
 npm run e2e       # three headless browsers play 120 turns against the built server
 node scripts/server-test.mjs   # raw WebSocket checks: rejoin, auto-play, kick, restart
+node scripts/solo-test.mjs 40  # single-player smoke test against the computer players
 npm start         # build and run
 ```
 
@@ -47,3 +61,5 @@ npm start         # build and run
 - `src/shared` – board data, cards, types, wire protocol
 - `src/server` – Node WebSocket server: rooms, lobby, reconnects, turn timer
 - `src/client` – browser client: board, animations, dialogs, paper-craft SVG art
+- `src/engine/bot.ts` – the computer player
+- `src/client/single.ts` + `local.ts` – single-player entry point and in-browser game loop

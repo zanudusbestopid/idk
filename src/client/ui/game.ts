@@ -7,7 +7,7 @@ import { isMuted, setMuted, sfx } from '../audio.js';
 import { append, h, clear, money, sleep, toast } from '../dom.js';
 import { Board, spaceColor } from './board.js';
 import {
-  AuctionView, DebtView, ManageView, Modals, TradeComposer, buyContent, confetti, deedViewerContent, incomingTradeContent,
+  AuctionView, DebtView, ManageView, Modals, TradeComposer, buyContent, confetti, confirmDialog, deedViewerContent, incomingTradeContent,
   nameTag, openTradesContent, playerName, showCard, standingsContent,
 } from './dialogs.js';
 import { tokenSvg } from './home.js';
@@ -17,6 +17,13 @@ export interface GameHandlers {
   chat(text: string): void;
   leave(): void;
   restart(): void;
+}
+
+export interface GameScreenOptions {
+  chat?: boolean;            // show the chat box (default true)
+  onIdle?: () => void;       // called whenever animations have drained and the screen shows the latest state
+  restartLabel?: string;     // label of the host's button on the standings dialog
+  leaveText?: string;        // confirmation text for the Leave button
 }
 
 export class GameScreen {
@@ -46,9 +53,12 @@ export class GameScreen {
   private gameOverShown = false;
   private lastLogCount = 0;
 
-  constructor(root: HTMLElement, meId: string, handlers: GameHandlers) {
+  private opts: GameScreenOptions;
+
+  constructor(root: HTMLElement, meId: string, handlers: GameHandlers, opts: GameScreenOptions = {}) {
     this.root = root;
     this.meId = meId;
+    this.opts = opts;
     // Lock every action button after a click until the server answers, so a double
     // click cannot send the same action twice.
     this.handlers = { ...handlers, send: (a) => { this.lockButtons(); handlers.send(a); } };
@@ -58,10 +68,10 @@ export class GameScreen {
       this.chatInput, h('button', { class: 'btn btn--sm', type: 'submit' }, 'Send'));
     const muteBtn = h('button', { class: 'btn btn--sm', type: 'button', title: 'Toggle sound' }, isMuted() ? '🔇' : '🔊');
     muteBtn.addEventListener('click', () => { setMuted(!isMuted()); muteBtn.textContent = isMuted() ? '🔇' : '🔊'; });
-    const leaveBtn = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { if (confirm('Leave the game? If it is still running you will forfeit.')) handlers.leave(); } }, 'Leave');
+    const leaveBtn = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => confirmDialog(this.modals, opts.leaveText ?? 'Leave the game? If it is still running you will forfeit.', () => this.handlers.leave(), 'Leave') }, 'Leave');
     const logbox = h('div', { class: 'logbox paper paper--flat' },
-      h('h3', null, 'Log & chat', h('span', { class: 'topbar' }, muteBtn, leaveBtn)),
-      this.logEl, chatForm);
+      h('h3', null, opts.chat === false ? 'Log' : 'Log & chat', h('span', { class: 'topbar' }, muteBtn, leaveBtn)),
+      this.logEl, opts.chat === false ? null : chatForm);
     root.appendChild(h('div', { class: 'game' },
       this.playersEl,
       h('div', { class: 'game__board' }, this.board.wrap),
@@ -122,6 +132,7 @@ export class GameScreen {
       for (const ev of state.log) this.appendLog(ev, state);
       this.lastLogCount = state.log.length;
       this.render();
+      this.opts.onIdle?.();
       return;
     }
     this.locked = [];
@@ -140,6 +151,7 @@ export class GameScreen {
     }
     this.processing = false;
     this.render();
+    this.opts.onIdle?.();
   }
 
   private async animate(ev: GameEvent, state: GameState): Promise<void> {
@@ -321,7 +333,7 @@ export class GameScreen {
 
     // Debt
     if (wantDebt) {
-      if (!this.debt || force || !this.modals.has('debt')) { this.debt = new DebtView(this.handlers.send); this.modals.show('debt', this.debt.el, { wide: true }); }
+      if (!this.debt || force || !this.modals.has('debt')) { this.debt = new DebtView(this.handlers.send, this.modals); this.modals.show('debt', this.debt.el, { wide: true }); }
       this.debt.update(state, this.meId);
     } else if (this.modals.has('debt')) { this.modals.close('debt'); this.debt = null; }
 
@@ -356,7 +368,7 @@ export class GameScreen {
       this.modals.closeAll();
       const winner = state.players.find((p) => p.id === state.winner);
       if (winner?.id === this.meId) { sfx.win(); confetti(state.players.map((p) => p.color)); } else sfx.lose();
-      this.modals.show('over', standingsContent(state, this.meId, this.room?.hostId === this.meId, this.handlers.leave, this.handlers.restart), { dismissible: true });
+      this.modals.show('over', standingsContent(state, this.meId, this.room?.hostId === this.meId, this.handlers.leave, this.handlers.restart, this.opts.restartLabel), { dismissible: true });
     }
   }
 

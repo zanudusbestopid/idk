@@ -405,3 +405,16 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .small { font-size: 0.85em; }
 .row-between { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .topbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* ----- single-player setup ----- */
+.setup { width: min(980px, 100%); padding: 24px 26px; display: grid; grid-template-columns: 1.15fr 1fr; gap: 22px; }
+.setup .title-art { font-size: clamp(2.2rem, 7vw, 3.4rem); margin: 0 0 4px; }
+.setup .subtitle { text-align: center; margin: 0 0 16px; color: var(--ink-soft); font-size: 1.05em; }
+.setup .resume { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 14px; background: #e8f6e5; flex-wrap: wrap; }
+.setup .count-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.setup .bots { display: flex; gap: 8px; flex-wrap: wrap; }
+.setup .bot { display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; font-weight: 600; }
+.setup .bot svg { width: 36px; height: 36px; }
+.setup .rules { padding: 14px 16px; align-self: start; }
+.setup .rules h2 { margin: 0 0 10px; font-size: 1.15em; }
+@media (max-width: 760px) { .setup, .lobby { grid-template-columns: 1fr; } .setup .rules { transform: none; } }

@@ -1,7 +1,7 @@
 // Small synthesized sound effects (no audio files needed).
 
 let ctx: AudioContext | null = null;
-let muted = localStorage.getItem('pt.muted') === '1';
+let muted = (() => { try { return localStorage.getItem('pt.muted') === '1'; } catch { return false; } })();
 
 function ac(): AudioContext | null {
   if (muted) return null;
@@ -14,7 +14,7 @@ function ac(): AudioContext | null {
 
 export function unlockAudio(): void { ac(); }
 export function isMuted(): boolean { return muted; }
-export function setMuted(m: boolean): void { muted = m; localStorage.setItem('pt.muted', m ? '1' : '0'); }
+export function setMuted(m: boolean): void { muted = m; try { localStorage.setItem('pt.muted', m ? '1' : '0'); } catch { /* storage unavailable */ } }
 
 function tone(freq: number, dur: number, type: OscillatorType = 'sine', gain = 0.15, when = 0, slide = 0): void {
   const c = ac(); if (!c) return;

@@ -1,9 +1,9 @@
 import type { RoomView } from '../../shared/protocol.js';
 import type { GameConfig } from '../../shared/types.js';
 import { TOKEN_LIST } from '../../shared/tokens.js';
-import { ICONS } from '../art/icons.js';
 import { h, clear, toast } from '../dom.js';
 import { tokenSvg } from './home.js';
+import { hostOnlyNote, rulesPanel, turnTimerRule } from './rules.js';
 
 export interface LobbyHandlers {
   onSetToken(token: string): void;
@@ -103,31 +103,8 @@ export class LobbyScreen {
 
   private renderRules(c: GameConfig, editable: boolean): void {
     clear(this.rulesEl);
-    const rows: HTMLElement[] = [];
-    const num = (key: keyof GameConfig, label: string, hint: string, min: number, max: number, step = 1) => {
-      const input = h('input', { class: 'input', type: 'number', min, max, step, value: String(c[key] ?? 0), disabled: !editable }) as HTMLInputElement;
-      input.addEventListener('change', () => this.handlers.onSetConfig({ [key]: Number(input.value) } as Partial<GameConfig>));
-      rows.push(h('div', { class: 'rule' }, h('div', null, h('div', { class: 'rlabel' }, label), h('div', { class: 'rhint' }, hint)), input));
-    };
-    const bool = (key: keyof GameConfig, label: string, hint: string) => {
-      const sw = h('button', { class: `switch ${c[key] ? 'is-on' : ''}`, type: 'button', role: 'switch', 'aria-checked': String(!!c[key]), disabled: !editable,
-        onClick: () => this.handlers.onSetConfig({ [key]: !c[key] } as Partial<GameConfig>) });
-      rows.push(h('div', { class: 'rule' }, h('div', null, h('div', { class: 'rlabel' }, label), h('div', { class: 'rhint' }, hint)), sw));
-    };
-    num('startingCash', 'Starting cash', 'Everyone begins with this much.', 100, 10000, 50);
-    num('goSalary', 'Salary for passing Go', 'Collected each lap.', 0, 2000, 10);
-    bool('auctions', 'Auctions', 'A property nobody buys goes to auction (official rule).');
-    bool('freeParkingJackpot', 'Free Parking jackpot', 'Taxes and fees pile up; land there to collect.');
-    bool('doubleGoSalary', 'Double salary on Go', 'Landing exactly on Go pays twice.');
-    num('jailFine', 'Jail fine', 'Cost to leave jail early.', 0, 1000, 10);
-    num('maxJailTurns', 'Max turns in jail', 'Then you must pay and move.', 1, 6);
-    const timerSel = h('select', { class: 'input', disabled: !editable }) as HTMLSelectElement;
-    for (const [v, label] of [[0, 'Off'], [30, '30 s'], [60, '60 s'], [90, '90 s'], [120, '2 min'], [180, '3 min'], [300, '5 min']] as [number, string][]) {
-      timerSel.appendChild(h('option', { value: String(v), selected: (c.turnTimerSeconds ?? 0) === v }, label));
-    }
-    timerSel.addEventListener('change', () => this.handlers.onSetConfig({ turnTimerSeconds: Number(timerSel.value) || null }));
-    rows.push(h('div', { class: 'rule' }, h('div', null, h('div', { class: 'rlabel' }, 'Turn timer'), h('div', { class: 'rhint' }, 'Slow players get auto-played.')), timerSel));
-    this.rulesEl.append(...rows);
-    if (!editable) this.rulesEl.appendChild(h('div', { class: 'muted small', style: { marginTop: '8px' } }, h('span', { class: 'ico', html: ICONS.timer, style: { width: '1em', display: 'inline-block', verticalAlign: 'middle' } }), ' Only the host can change the rules.'));
+    this.rulesEl.appendChild(rulesPanel(c, editable, (patch) => this.handlers.onSetConfig(patch)));
+    this.rulesEl.appendChild(turnTimerRule(c, editable, (patch) => this.handlers.onSetConfig(patch)));
+    if (!editable) this.rulesEl.appendChild(hostOnlyNote());
   }
 }
