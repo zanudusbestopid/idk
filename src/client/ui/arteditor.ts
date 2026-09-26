@@ -140,6 +140,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     current = c;
     for (const b of useButtons) { b.disabled = !c; b.title = c ? `Use ${c.info}` : 'Nothing selected yet: cut something on the Sheet tab or pick a sprite'; }
     composer.setStamp(c?.canvas ?? null, c ? (c.kind === 'cut' ? c.info : c.name) : '');
+    if (tab === 'scenery' && board) renderPalette();
     updateBar();
   }
   function setCurrentSprite(name: string): void {
@@ -513,6 +514,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     heightIn.addEventListener('change', () => { hSnap = false; if (!p) return; commitProps(); board?.rebuildScenery(); board?.markProp(p.id); drawSceneMap(map, hoverId); });
     const heightNum = num(p?.h ?? 1, 0.1, (v) => { if (p) { snapshot(); p.h = Math.max(0.1, v); heightIn.value = String(p.h); commitProps(); board?.rebuildScenery(); board?.markProp(p.id); drawSceneMap(map, hoverId); } }, 60);
     const el = h('div', { class: 'arted__tab arted__tab--scroll' },
+      h('p', { class: 'arted__hint' }, 'Drag art from the list on the right straight onto the 3D table, or grab a prop on the table to move it. The map below shows everything from above.'),
       map,
       h('div', { class: 'arted__row' }, h('label', null, 'Map'), ...rangeBtns, h('span', { class: 'arted__grow' }),
         h('button', { class: 'btn btn--sm', type: 'button', disabled: !p, title: 'Swing the camera to the selected prop', onClick: () => { if (p) board?.focusPoint(p.x, p.y + p.h / 2, p.z, Math.max(6, p.h * 4)); } }, 'Look at')),
@@ -533,19 +535,29 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
           h('label', null, 'y'), num(p.y, 0.25, (v) => { p.y = v; moveLive(); }),
           h('label', { class: 'arted__check' }, h('input', { type: 'checkbox', checked: !!p.float, onChange: (e: Event) => { snapshot(); p.float = (e.target as HTMLInputElement).checked; moveLive(); } }), ' floats')),
         h('div', { class: 'arted__row' }, h('label', null, 'Height'), heightIn, heightNum, h('span', { class: 'muted small' }, 'units (a token is about 0.8)'), moveBtn),
-        h('p', { class: 'arted__hint' }, 'x runs left to right, z towards the camera (the board edge is at ±8.6), y lifts it off the table. Drag on the map, type numbers, or move it on the 3D table.')) : h('p', { class: 'arted__hint' }, 'No scenery yet. Add a prop, or restore the default layout.'));
+        h('p', { class: 'arted__hint' }, 'x runs left to right, z towards the camera (the board edge is at ±8.6), y lifts it off the table. Grab any prop on the 3D table to drag it, drag it on the map, or type numbers. Delete removes the selected prop.')) : h('p', { class: 'arted__hint' }, 'No scenery yet. Drag art from the list on the right onto the table, add a prop, or restore the default layout.'));
     requestAnimationFrame(() => drawSceneMap(map, null));
     return el;
   }
-  // moving props by clicking/dragging on the 3D table (capture phase, so the camera does not turn)
+  // moving props on the 3D table (capture phase, so the camera does not turn): grab a prop directly,
+  // or, with "Move on table" on, click/drag anywhere to put the selected prop there
+  let dragOff = { x: 0, z: 0 };
+  let dragMoved = false;
   function onTableDown(e: PointerEvent): void {
-    if (!moveMode || !board || e.button !== 0 || tab !== 'scenery') return;
+    if (!board || e.button !== 0 || tab !== 'scenery') return;
+    const hit = board.pickProp(e);
+    if (!hit && !moveMode) return;
+    if (hit) propId = hit;
     const p = propOf(propId);
     if (!p) return;
     e.stopPropagation(); e.preventDefault();
+    const g = board.pickGround(e);
+    dragOff = hit && g ? { x: p.x - g.x, z: p.z - g.z } : { x: 0, z: 0 };
+    dragMoved = false;
     snapshot();
     tableDrag = true;
-    onTableMove(e);
+    board.markProp(p.id);
+    if (!hit) onTableMove(e);
   }
   function onTableMove(e: PointerEvent): void {
     if (!tableDrag || !board) return;
@@ -553,15 +565,116 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     const p = propOf(propId);
     const g = board.pickGround(e);
     if (!p || !g) return;
-    p.x = Math.round(g.x * 4) / 4; p.z = Math.round(g.z * 4) / 4;
+    const nx = Math.round((g.x + dragOff.x) * 4) / 4, nz = Math.round((g.z + dragOff.z) * 4) / 4;
+    if (nx === p.x && nz === p.z) return;
+    p.x = nx; p.z = nz; dragMoved = true;
     if (!board.moveProp(p)) board.rebuildScenery();
   }
   function onTableUp(e: PointerEvent): void {
     if (!tableDrag) return;
     e.stopPropagation();
     tableDrag = false;
-    commitProps();
+    if (dragMoved) commitProps(); else history.pop(); // a plain click only selects
+    updateBar();
     renderTab();
+  }
+
+  // ---------- palette: drag art from a vertical list onto the table ----------
+  const palette = h('div', { class: 'arted__palette paper paper--flat hidden' });
+  let palFilter = '';
+  function propHeightFor(name: string): number {
+    const c = spriteThumb(name);
+    return c ? Math.max(0.4, Math.min(6, Math.round(c.height * 0.05 * 10) / 10)) : 1;
+  }
+  function uniquePropId(base: string): string {
+    const clean = base.replace(/[^a-z0-9_-]/gi, '') || 'prop';
+    let i = 1; let id = clean;
+    while (props.some((q) => q.id === id)) id = `${clean}-${++i}`;
+    return id;
+  }
+  /** Start dragging `name` (or the current cut when null) from the palette onto the table. */
+  function paletteDrag(item: HTMLElement, name: string | null, e: PointerEvent): void {
+    if (!board || e.button !== 0) return;
+    e.preventDefault();
+    item.setPointerCapture(e.pointerId);
+    item.classList.add('is-dragging');
+    let def: PropDef | null = null;
+    let sprite = name;
+    const start = { x: e.clientX, y: e.clientY };
+    const ensureSprite = (): string | null => {
+      if (sprite) return sprite;
+      sprite = useCurrent(uniquePropId('cut') + '_art'); // saves the cut under a name
+      return sprite;
+    };
+    const move = (ev: PointerEvent) => {
+      const over = board.isOverCanvas(ev.clientX, ev.clientY);
+      if (over) {
+        const g = board.pickGround(ev);
+        if (!g) return;
+        if (!def) {
+          const sp = ensureSprite();
+          if (!sp) return;
+          def = { id: uniquePropId(sp.replace(/:/g, '')), sprite: sp, x: 0, y: 0, z: 0, h: propHeightFor(sp) };
+          if (!board.addProp(def)) { def = null; return; }
+        }
+        def.x = Math.round(g.x * 4) / 4; def.z = Math.round(g.z * 4) / 4;
+        board.moveProp(def);
+      } else if (def) { board.removeProp(def.id); def = null; }
+    };
+    const up = (ev: PointerEvent) => {
+      item.removeEventListener('pointermove', move);
+      item.removeEventListener('pointerup', up);
+      item.removeEventListener('pointercancel', up);
+      item.classList.remove('is-dragging');
+      if (def) {
+        snapshot();
+        props.push(def); propId = def.id; commitProps();
+        board.markProp(def.id);
+        renderTab();
+        toast(`Placed “${def.id}”. Drag it on the table to move it, Delete removes it.`);
+      } else if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 6) {
+        // a plain click: put it in front of the board
+        const sp = ensureSprite();
+        if (!sp) return;
+        snapshot();
+        const id = uniquePropId(sp.replace(/:/g, ''));
+        props.push({ id, sprite: sp, x: Math.round((Math.random() * 8 - 4) * 4) / 4, y: 0, z: BOARD_HALF + 3, h: propHeightFor(sp) });
+        propId = id; commitProps(); afterArt();
+        toast(`Added “${id}” in front of the board.`);
+      }
+    };
+    item.addEventListener('pointermove', move);
+    item.addEventListener('pointerup', up);
+    item.addEventListener('pointercancel', up);
+  }
+  function renderPalette(): void {
+    clear(palette);
+    const filterIn = h('input', { type: 'text', placeholder: 'filter', value: palFilter });
+    filterIn.addEventListener('input', () => { palFilter = filterIn.value.trim().toLowerCase(); renderList(); });
+    const list = h('div', { class: 'arted__palette-list' });
+    const item = (name: string | null, label: string, canvas: HTMLCanvasElement | null): HTMLElement => {
+      const el = h('div', { class: 'arted__pal', title: `Drag “${label}” onto the table (or click to add it in front of the board)` }, thumb(canvas, 40), h('span', null, label));
+      el.addEventListener('pointerdown', (e) => paletteDrag(el, name, e));
+      return el;
+    };
+    function renderList(): void {
+      clear(list);
+      const f = palFilter;
+      if (current && (!f || 'current art'.includes(f))) { list.append(h('div', { class: 'arted__pal-head' }, 'Current art'), item(current.kind === 'sprite' ? current.name : null, current.kind === 'cut' ? `cut ${current.canvas.width}×${current.canvas.height}` : current.name, current.canvas)); }
+      const groups: [string, string[]][] = [
+        ['Assembled', ASSEMBLED],
+        ['Yours', spriteNames().filter((n) => isOverridden(n))],
+        ['Pack', spriteNames().filter((n) => !isOverridden(n))],
+      ];
+      for (const [head, names] of groups) {
+        const shown = names.filter((n) => !f || n.includes(f));
+        if (!shown.length) continue;
+        list.append(h('div', { class: 'arted__pal-head' }, head));
+        for (const n of shown) list.append(item(n, n, spriteThumb(n)));
+      }
+    }
+    renderList();
+    palette.append(h('b', { class: 'arted__pal-title' }, 'Drag onto the table'), filterIn, list);
   }
 
   // ---------- slots tab ----------
@@ -602,6 +715,9 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     useButtons.length = 0;
     clear(body);
     if (tab !== 'scenery') { moveMode = false; tableDrag = false; board?.markProp(null); }
+    palette.classList.toggle('hidden', tab !== 'scenery' || !board);
+    overlay.classList.toggle('has-palette', tab === 'scenery' && !!board);
+    if (tab === 'scenery' && board) renderPalette();
     board?.setSpaceClick(tab === 'spaces' ? (i) => { spaceIdx = i; renderTab(); } : () => {});
     body.appendChild(tab === 'sheet' ? sheetTab() : tab === 'compose' ? composeTab() : tab === 'sprites' ? spritesTab() : tab === 'spaces' ? spacesTab() : tab === 'scenery' ? sceneryTab() : slotsTab());
     for (const [t, b] of tabBtns) b.classList.toggle('btn--blue', t === tab);
@@ -647,7 +763,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
       h('li', null, h('b', null, 'Compose'), ': stamp the current art into a grid cell by cell to connect tiles into one bigger sprite (flip it for mirrored pieces), then use or save the result.'),
       h('li', null, h('b', null, 'Sprites'), ': every sprite in the pack and every one you made. Click one to make it the current art.'),
       h('li', null, h('b', null, 'Spaces'), ': click a space on the mini board (or on the 3D board) and give it a ground strip and a decoration with “← use”.'),
-      h('li', null, h('b', null, 'Scenery'), ': the hills, pipes and clouds around the table. Drag them on the map, or turn on “Move on table” and drag on the 3D table.'),
+      h('li', null, h('b', null, 'Scenery'), ': the hills, pipes and clouds around the table. Drag art from the list on the right straight onto the 3D table, grab a prop on the table to move it, or drag it on the map. Delete removes the selected prop.'),
       h('li', null, h('b', null, 'Slots'), ': the logo, houses, decks, dice and other art the board draws by name.')),
     h('b', null, 'Shortcuts'),
     h('ul', null,
@@ -669,7 +785,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     resetBtn,
     h('button', { class: 'btn btn--sm', type: 'button', title: 'How to use the editor', onClick: () => help.classList.toggle('hidden') }, '?'),
     h('button', { class: 'btn btn--sm btn--primary', type: 'button', id: 'arted-close', onClick: () => close() }, 'Close'));
-  const overlay = h('div', { class: 'arted', id: 'art-editor' }, bar, panel, help);
+  const overlay = h('div', { class: 'arted', id: 'art-editor' }, bar, panel, palette, help);
   root.appendChild(overlay);
 
   const boardEl = board?.wrap ?? null;
@@ -682,6 +798,11 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     const typing = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
     if (e.key === 'Escape') { if (moveMode) { moveMode = false; renderTab(); } help.classList.add('hidden'); return; }
     if (typing) return;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && tab === 'scenery' && propId) {
+      const p = propOf(propId);
+      if (p) { e.preventDefault(); snapshot(); props = props.filter((q) => q !== p); propId = props[0]?.id ?? null; commitProps(); afterArt(); toast(`Removed “${p.id}”.`); }
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); void (e.shiftKey ? redoLast() : undo()); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); void redoLast(); }
   };

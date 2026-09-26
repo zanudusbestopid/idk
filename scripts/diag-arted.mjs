@@ -155,6 +155,28 @@ prop = ((await saved()).props ?? []).find((p) => p.id === 'test_block');
 console.log('after table click:', JSON.stringify(prop));
 await page.screenshot({ path: 'shots/arted-4-scenery.png' });
 
+// Palette: drag "hill" from the vertical list onto the table, then grab it in 3D, drag it, and delete it
+console.log('palette visible:', await page.isVisible('.arted__palette'), 'items:', await page.locator('.arted__pal').count());
+await page.fill('.arted__palette input', 'hill');
+await page.waitForTimeout(150);
+const hillItem = page.locator('.arted__pal', { hasText: /^hill$/ }).first();
+const hb = await hillItem.boundingBox();
+await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2); await page.mouse.down();
+await page.mouse.move(900, 600, { steps: 6 }); await page.mouse.move(950, 620, { steps: 4 }); await page.mouse.up();
+await page.waitForTimeout(800);
+let dropped = ((await saved()).props ?? []).find((p) => p.sprite === 'hill' && p.id.startsWith('hill') && !/^hill-[ewns]$|^hill-/.test(p.id)) ?? ((await saved()).props ?? []).slice(-1)[0];
+console.log('dropped from palette:', JSON.stringify(dropped), 'selected in list:', await page.$eval('.arted__list', (s) => s.value));
+await page.click('.arted__tab button:has-text("Look at")');
+await page.waitForTimeout(400);
+await page.mouse.move(700, 450); await page.mouse.down(); await page.mouse.move(760, 470, { steps: 5 }); await page.mouse.move(800, 480, { steps: 3 }); await page.mouse.up();
+await page.waitForTimeout(600);
+const moved = ((await saved()).props ?? []).find((p) => p.id === dropped.id);
+console.log('after 3D drag:', JSON.stringify(moved), 'moved?', moved.x !== dropped.x || moved.z !== dropped.z);
+await page.screenshot({ path: 'shots/arted-10-palette.png' });
+await page.keyboard.press('Delete');
+await page.waitForTimeout(600);
+console.log('after Delete, still there?', !!((await saved()).props ?? []).find((p) => p.id === dropped.id));
+
 // Slots tab: put the current art into 'house', then undo and redo it
 await page.click('.arted__tabs button:has-text("Slots")');
 await page.waitForTimeout(300);

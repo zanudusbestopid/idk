@@ -651,6 +651,44 @@ export class Board3D implements BoardView {
     return { x: hit.x, z: hit.z };
   }
 
+  /** Art editor: the prop under a pointer event (its id), or null. */
+  pickProp(e: PointerEvent): string | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hits = ray.intersectObjects(this.props.map((p) => p.group), true);
+    for (const hit of hits) {
+      let o: THREE.Object3D | null = hit.object;
+      while (o && !this.props.some((p) => p.group === o)) o = o.parent;
+      const prop = this.props.find((p) => p.group === o);
+      if (prop) return prop.id;
+    }
+    return null;
+  }
+  /** Art editor: put one prop into the scene right away (no rebuild). False when its art is missing. */
+  addProp(def: PropDef): boolean {
+    const canvas = propCanvas(def.sprite);
+    if (!canvas) return false;
+    this.removeProp(def.id);
+    const prop = new PropObj(canvas, def.h);
+    prop.id = def.id;
+    prop.group.position.set(def.x, def.y, def.z);
+    if (def.float) prop.setFloating(def.y);
+    this.scene.add(prop.group);
+    this.props.push(prop);
+    return true;
+  }
+  /** Art editor: take one prop out of the scene (no rebuild). */
+  removeProp(id: string): void {
+    const i = this.props.findIndex((p) => p.id === id);
+    if (i < 0) return;
+    this.scene.remove(this.props[i].group);
+    this.props.splice(i, 1);
+  }
+  /** Art editor: whether a client point is over the 3D canvas itself (not a panel drawn over it). */
+  isOverCanvas(x: number, y: number): boolean { return document.elementFromPoint(x, y) === this.canvas; }
+
   /** Art editor: move one prop in place (no rebuild). False when the prop is not in the scene. */
   moveProp(def: PropDef): boolean {
     const p = this.props.find((q) => q.id === def.id);
