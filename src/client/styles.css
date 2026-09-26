@@ -156,27 +156,38 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .lobby .my-token .token-pick .name { display: none; }
 
 /* ----- game layout ----- */
-.game {
-  flex: 1; display: grid; gap: 12px; padding: 12px;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(220px, 300px);
-  grid-template-rows: minmax(0, 1fr) auto;
-  grid-template-areas: "players board log" "players actions log";
-  height: 100vh; height: 100dvh; min-height: 0; max-height: 100dvh; overflow: hidden;
-}
-.game__players { grid-area: players; display: flex; flex-direction: column; gap: 10px; overflow: auto; padding-right: 4px; min-height: 0; }
-.game__board { grid-area: board; display: flex; align-items: center; justify-content: center; min-height: 0; min-width: 0; }
-.game__log { grid-area: log; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.game__actions { grid-area: actions; }
+/* The game is one full-window viewport; players, actions and the log float over it as a HUD. */
+.game { position: fixed; inset: 0; overflow: hidden; }
+.game__board { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.game__board .board3d-wrap { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
+.game__board .board-wrap { width: min(100vw - 580px, 100dvh - 110px); max-width: none; }
+.game__players { position: absolute; left: 12px; top: 12px; width: 236px; max-height: calc(100% - 120px); overflow: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; z-index: 5; scrollbar-width: thin; }
+.game__actions { position: absolute; left: 12px; right: 12px; bottom: 14px; display: flex; justify-content: center; z-index: 6; pointer-events: none; }
+.game__actions .actions { pointer-events: auto; max-width: 100%; justify-content: center; }
+.game__log { position: absolute; right: 12px; top: 64px; width: 300px; max-height: min(46vh, 440px); display: flex; flex-direction: column; min-height: 0; z-index: 5; }
+.game__log .logbox { max-height: 100%; flex: 0 1 auto; }
+.game__log .log { flex: 0 1 auto; max-height: min(34vh, 330px); }
+.game__log .logbox h3 { cursor: pointer; user-select: none; }
+.game__log .logbox.is-collapsed .log, .game__log .logbox.is-collapsed form { display: none; }
+.game__log .logbox.is-collapsed { flex: 0 0 auto; }
+.game .pcard, .game .logbox, .game .actions { background: color-mix(in srgb, var(--paper) 94%, transparent); }
+.game .board3d-hint { top: auto; bottom: 96px; left: 12px; }
+.game .turn-toast { top: 12px; }
 
-@media (max-width: 1100px) {
-  .game { grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); grid-template-rows: auto auto auto; grid-template-areas: "players board" "actions actions" "log log"; height: auto; max-height: none; overflow: visible; }
-  .game__log { height: 300px; }
-  .game__players { overflow: visible; }
+@media (max-width: 900px) {
+  .game__players { width: 176px; gap: 6px; }
+  .game__players .pcard { padding: 6px 8px; grid-template-columns: 34px 1fr; gap: 4px 8px; }
+  .game__players .pcard .ptoken svg { width: 34px; height: 34px; }
+  .game__players .pcard .pmeta { display: none; }
+  .game__log { width: min(280px, 55vw); top: auto; bottom: 96px; max-height: 34vh; }
+  .game__board .board-wrap { width: min(100vw - 200px, 100dvh - 110px); }
 }
-@media (max-width: 760px) {
-  .game { grid-template-columns: 1fr; grid-template-areas: "board" "actions" "players" "log"; padding: 8px; gap: 8px; }
-  .game__players { flex-direction: row; flex-wrap: wrap; overflow: visible; }
-  .game__players .pcard { flex: 1 1 46%; }
+@media (max-width: 600px) {
+  .game__players { position: absolute; left: 8px; right: 8px; top: 8px; width: auto; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; max-height: none; padding-bottom: 4px; }
+  .game__players .pcard { flex: 0 0 150px; }
+  .game__actions { bottom: 8px; left: 8px; right: 8px; }
+  .game__board .board-wrap { width: min(100%, 100dvh - 200px); }
+  .game__log { right: 8px; left: 8px; width: auto; bottom: 88px; max-height: 30vh; }
 }
 
 /* ----- board ----- */
@@ -470,7 +481,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 @media (prefers-reduced-motion: reduce) { .title-hero .title-art, .setup-card, .setup-card .field, .title-hero .tagline { animation: none; } }
 
 /* ----- in-game polish ----- */
-.game__board { position: relative; }
 .turn-toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 8; pointer-events: none; font-weight: 700; font-size: 1.3em; padding: 0.35em 1em; background: var(--paper); border: 3px solid var(--ink); border-radius: 10px; box-shadow: 0 4px 0 0 var(--ink); }
 .turn-toast.is-in { animation: toast-flip-in 0.5s cubic-bezier(.2,.9,.3,1.3) both; }
 .turn-toast.is-out { animation: toast-flip-out 0.4s ease-in both; }

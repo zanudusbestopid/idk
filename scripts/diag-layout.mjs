@@ -1,0 +1,14 @@
+import { resolve } from 'node:path';
+import { chromium } from 'playwright';
+const EXE = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('file://' + resolve(process.env.PT_HTML ?? 'dist/paper-tycoon-solo.html'), { waitUntil: 'domcontentloaded' });
+await page.waitForSelector('#setup-start');
+await page.click('#setup-start');
+await page.waitForTimeout(2500);
+const info = await page.evaluate(() => ['.app', '.game', '.game__board', '.board3d-wrap', '.board3d-canvas', '.game__players', '.game__actions', '.game__log'].map((sel) => { const el = document.querySelector(sel); if (!el) return `${sel}: missing`; const r = el.getBoundingClientRect(); const cs = getComputedStyle(el); return `${sel}: ${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)} pos=${cs.position} disp=${cs.display} vis=${cs.visibility} parent=${el.parentElement?.className}`; }));
+console.log(info.join('\n'));
+await page.screenshot({ path: 'shots/layout-debug.png' });
+await browser.close();

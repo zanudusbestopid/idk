@@ -86,9 +86,10 @@ export class GameScreen {
     const viewBtn = h('button', { class: 'btn btn--sm', type: 'button', title: 'Switch between the 3D and flat board' }, this.mode3d ? '2D' : '3D');
     viewBtn.addEventListener('click', () => { this.switchBoard(!this.mode3d); viewBtn.textContent = this.mode3d ? '2D' : '3D'; });
     if (!webglAvailable()) viewBtn.classList.add('hidden');
-    const logbox = h('div', { class: 'logbox paper paper--flat' },
-      h('h3', null, opts.chat === false ? 'Log' : 'Log & chat', h('span', { class: 'topbar' }, viewBtn, muteBtn, leaveBtn)),
-      this.logEl, opts.chat === false ? null : chatForm);
+    const logHead = h('h3', { title: 'Click to collapse or expand the log' }, opts.chat === false ? 'Log' : 'Log & chat', h('span', { class: 'topbar' }, viewBtn, muteBtn, leaveBtn));
+    const logbox = h('div', { class: 'logbox paper paper--flat' }, logHead, this.logEl, opts.chat === false ? null : chatForm);
+    logHead.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('button')) return; logbox.classList.toggle('is-collapsed'); });
+    if (window.innerWidth < 900) logbox.classList.add('is-collapsed');
     root.appendChild(h('div', { class: 'game' },
       this.playersEl,
       this.boardHost,
