@@ -676,6 +676,7 @@ function doBuy(ctx: Ctx, p: Player): string | null {
   ps.owner = p.id;
   emit(ctx, { type: 'bought', player: p.id, space: idx, price });
   s.pendingSpace = null;
+  s.phase = 'roll';
   continueTurn(ctx);
   return null;
 }
@@ -686,6 +687,7 @@ function doDecline(ctx: Ctx, p: Player): string | null {
   if (idx === null) return 'Nothing to decline';
   emit(ctx, { type: 'declined', player: p.id, space: idx });
   s.pendingSpace = null;
+  s.phase = 'roll';
   if (s.config.auctions) startAuction(ctx, idx, p);
   else continueTurn(ctx);
   return null;

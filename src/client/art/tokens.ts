@@ -171,19 +171,20 @@ const DUCK_SVG =
   STICKER +
   '<path d="M12 40 L5 32 L20 35 Z"/>' +
   '<path d="M9 47 Q9 34 24 34 L40 34 Q57 34 57 47 Q57 58 42 58 L22 58 Q9 58 9 47 Z"/>' +
-  '<path d="M33 17.5 L47 21 L33 26 Z"/>' +
-  '<circle cx="24" cy="22" r="12"/>' +
+  '<path d="M32 16 L50 21 L32 27.5 Z"/>' +
+  '<circle cx="23" cy="22" r="12"/>' +
   '</g>' +
   INK +
   '<path d="M12 40 L5 32 L20 35 Z" fill="#f2b632"/>' +
   '<path d="M9 47 Q9 34 24 34 L40 34 Q57 34 57 47 Q57 58 42 58 L22 58 Q9 58 9 47 Z" fill="#f2b632"/>' +
   '<path d="M12 52 L54 52 Q51.5 56.6 42 56.6 L22 56.6 Q13 56.6 12 52 Z" fill="#d99a1e" stroke="none"/>' +
   '<path d="M27 41 Q40 35 50 44 Q40 52 27 46 Z" fill="#d99a1e"/>' +
-  '<path d="M33 17.5 L47 21 L33 26 Z" fill="#e8842f"/>' +
-  '<circle cx="24" cy="22" r="12" fill="#f2b632"/>' +
-  '<circle cx="22" cy="19" r="2.2" fill="#2b2118" stroke="none"/>' +
-  '<circle cx="29" cy="19" r="2.2" fill="#2b2118" stroke="none"/>' +
-  '<circle cx="18.5" cy="24.5" r="1.8" fill="#f5a3a3" stroke="none"/>' +
+  '<path d="M32 16 L50 21 L32 27.5 Z" fill="#e8842f"/>' +
+  '<path d="M37 21.6 L47.5 21.2" fill="none" stroke-width="1.6"/>' +
+  '<circle cx="23" cy="22" r="12" fill="#f2b632"/>' +
+  '<circle cx="21" cy="19" r="2.2" fill="#2b2118" stroke="none"/>' +
+  '<circle cx="28" cy="19" r="2.2" fill="#2b2118" stroke="none"/>' +
+  '<circle cx="17.5" cy="24.5" r="1.8" fill="#f5a3a3" stroke="none"/>' +
   END;
 
 const ROBOT_SVG =

@@ -22,7 +22,7 @@ const GO =
   '</g>' +
   INK +
   '<path d="' + GO_ARROW + '" fill="#d9413a"/>' +
-  '<path d="M22 41 A10 10 0 0 1 42 41 L38 41 A6 6 0 0 0 26 41 Z" fill="#a8302b" stroke="none"/>' +
+  '<path d="M17.5 42 A14.5 14.5 0 0 1 46.5 42 L44.2 42 A12.2 12.2 0 0 0 19.8 42 Z" fill="#a8302b" stroke="none"/>' +
   '<path d="M39.5 43 L47.5 53 L55.5 43 Z" fill="#a8302b" stroke="none"/>' +
   END;
 
@@ -113,7 +113,7 @@ const ELECTRIC =
   '<circle cx="32" cy="28" r="16" fill="#f9e27a" stroke="none"/>' +
   '<path d="M40 14.2 A16 16 0 0 1 40 41.8 A26 26 0 0 0 40 14.2 Z" fill="#e9c94d" stroke="none"/>' +
   '<circle cx="32" cy="28" r="16" fill="none"/>' +
-  '<path d="M27 35 L27 28 L30 31.5 L32 27 L34 31.5 L37 28 L37 35" fill="none" stroke-width="2"/>' +
+  '<path d="M26 36 L26 32 L29 27 L32 34 L35 27 L38 32 L38 36" fill="none" stroke-width="2"/>' +
   '<path d="M24 42 L40 42 L40 52 Q40 54 38 54 L26 54 Q24 54 24 52 Z" fill="#9aa0a6"/>' +
   '<path d="M24 46 L40 46 M24 50 L40 50" fill="none" stroke-width="2"/>' +
   '<rect x="28" y="54" width="8" height="4" rx="1.5" fill="#6b7177"/>' +
@@ -185,39 +185,44 @@ const JAIL =
   OPEN +
   STICKER +
   '<rect x="8" y="8" width="48" height="48" rx="3"/>' +
-  '<rect x="10" y="6" width="4" height="52" rx="1.5"/>' +
-  '<rect x="50" y="6" width="4" height="52" rx="1.5"/>' +
+  '<rect x="9" y="6" width="4" height="52" rx="1.5"/>' +
+  '<rect x="51" y="6" width="4" height="52" rx="1.5"/>' +
   '</g>' +
   INK +
   '<rect x="8" y="8" width="48" height="48" rx="3" fill="#d7d2c4"/>' +
-  '<circle cx="32" cy="32" r="12" fill="#fffaf0"/>' +
-  '<circle cx="29.5" cy="30" r="2" fill="#2b2118" stroke="none"/>' +
-  '<circle cx="34.5" cy="30" r="2" fill="#2b2118" stroke="none"/>' +
-  '<path d="M27.5 25 L30.5 26.5 M36.5 25 L33.5 26.5" fill="none" stroke-width="2"/>' +
-  '<path d="M28 39 Q32 35.5 36 39" fill="none" stroke-width="2.2"/>' +
-  '<rect x="8" y="17" width="48" height="3.5" fill="#8a8f94"/>' +
-  '<rect x="8" y="43.5" width="48" height="3.5" fill="#8a8f94"/>' +
-  '<rect x="10" y="6" width="4" height="52" rx="1.5" fill="#8a8f94"/>' +
-  '<rect x="23" y="6" width="4" height="52" rx="1.5" fill="#8a8f94"/>' +
-  '<rect x="37" y="6" width="4" height="52" rx="1.5" fill="#8a8f94"/>' +
-  '<rect x="50" y="6" width="4" height="52" rx="1.5" fill="#8a8f94"/>' +
+  '<rect x="10.5" y="10.5" width="43" height="43" rx="2" fill="#c9c3b3" stroke="none"/>' +
+  '<circle cx="32" cy="33" r="12" fill="#fffaf0"/>' +
+  '<circle cx="28.5" cy="31" r="2" fill="#2b2118" stroke="none"/>' +
+  '<circle cx="35.5" cy="31" r="2" fill="#2b2118" stroke="none"/>' +
+  '<path d="M26 26 L29.5 27.5 M38 26 L34.5 27.5" fill="none" stroke-width="2"/>' +
+  '<path d="M27.5 40 Q32 36 36.5 40" fill="none" stroke-width="2.2"/>' +
+  '<rect x="8" y="16" width="48" height="3.5" fill="#8a8f94"/>' +
+  '<rect x="8" y="46" width="48" height="3.5" fill="#8a8f94"/>' +
+  '<rect x="9" y="6" width="4" height="52" rx="1.5" fill="#8a8f94"/>' +
+  '<rect x="20.5" y="6" width="4" height="52" rx="1.5" fill="#8a8f94"/>' +
+  '<rect x="39.5" y="6" width="4" height="52" rx="1.5" fill="#8a8f94"/>' +
+  '<rect x="51" y="6" width="4" height="52" rx="1.5" fill="#8a8f94"/>' +
   END;
 
+const SIGN_A = 'M13 12 L45 12 L54 20.5 L45 29 L13 29 Z';
+const SIGN_B = 'M51 33 L19 33 L10 41 L19 49 L51 49 Z';
 const VISITING =
   OPEN +
   STICKER +
-  '<ellipse cx="23" cy="25" rx="7.5" ry="10.5" transform="rotate(-10 23 25)"/>' +
-  '<ellipse cx="26" cy="42" rx="5.5" ry="4.5" transform="rotate(-10 26 42)"/>' +
-  '<ellipse cx="41" cy="35" rx="7.5" ry="10.5" transform="rotate(-10 41 35)"/>' +
-  '<ellipse cx="44" cy="52" rx="5.5" ry="4.5" transform="rotate(-10 44 52)"/>' +
+  '<rect x="29.5" y="14" width="5" height="44" rx="1.5"/>' +
+  '<path d="' + SIGN_A + '"/>' +
+  '<path d="' + SIGN_B + '"/>' +
+  '<ellipse cx="32" cy="57" rx="11" ry="3.5"/>' +
   '</g>' +
   INK +
-  '<ellipse cx="23" cy="25" rx="7.5" ry="10.5" transform="rotate(-10 23 25)" fill="#8a8f94"/>' +
-  '<ellipse cx="23" cy="20" rx="5" ry="4" transform="rotate(-10 23 25)" fill="#6b7177" stroke="none"/>' +
-  '<ellipse cx="26" cy="42" rx="5.5" ry="4.5" transform="rotate(-10 26 42)" fill="#8a8f94"/>' +
-  '<ellipse cx="41" cy="35" rx="7.5" ry="10.5" transform="rotate(-10 41 35)" fill="#8a8f94"/>' +
-  '<ellipse cx="41" cy="30" rx="5" ry="4" transform="rotate(-10 41 35)" fill="#6b7177" stroke="none"/>' +
-  '<ellipse cx="44" cy="52" rx="5.5" ry="4.5" transform="rotate(-10 44 52)" fill="#8a8f94"/>' +
+  '<ellipse cx="32" cy="57" rx="11" ry="3.5" fill="#8a8f94"/>' +
+  '<rect x="29.5" y="14" width="5" height="44" rx="1.5" fill="#6b7177"/>' +
+  '<path d="' + SIGN_A + '" fill="#9aa0a6"/>' +
+  '<path d="M13 25 L47.5 25 L45 27.5 L13 27.5 Z" fill="#6b7177" stroke="none"/>' +
+  '<path d="M19 18 L40 18 M19 23 L33 23" fill="none" stroke-width="2.2"/>' +
+  '<path d="' + SIGN_B + '" fill="#9aa0a6"/>' +
+  '<path d="M51 45 L16.5 45 L19 47.5 L51 47.5 Z" fill="#6b7177" stroke="none"/>' +
+  '<path d="M25 39 L46 39 M31 44 L46 44" fill="none" stroke-width="2.2"/>' +
   END;
 
 const FREEPARKING =
@@ -351,24 +356,28 @@ const DOLLAR =
   '<path d="M35 28 Q34 26.5 32 26.5 Q29 26.5 29 29.5 Q29 32 32 32 Q35 32 35 34.5 Q35 37.5 32 37.5 Q30 37.5 29 36 M32 24.5 L32 26.5 M32 37.5 L32 39.5" fill="none" stroke-width="2"/>' +
   END;
 
+const HAND_L = 'M12 26 L33 26 Q40 26 40 33 L40 38 Q40 45 33 45 L12 45 Z';
+const HAND_R = 'M52 26 L35 26 Q27 26 27 34 L27 37 Q27 45 35 45 L52 45 Z';
+const FINGERS = 'M36 28 L45.5 28 Q50 28 50 32 L50 40.5 Q50 44.5 45.5 44.5 L36 44.5 Z';
+const THUMB = 'M20 21 Q20 17.5 24 17.5 L37 20 Q41 21 40 25 Q39 28 35 27.5 L22 27.5 Q20 27 20 25 Z';
 const HANDSHAKE =
   OPEN +
   STICKER +
-  '<rect x="3" y="27" width="11" height="15" rx="2"/>' +
-  '<rect x="50" y="27" width="11" height="15" rx="2"/>' +
-  '<rect x="12" y="27" width="24" height="18" rx="6"/>' +
-  '<rect x="28" y="26" width="24" height="18" rx="6"/>' +
-  '<rect x="18" y="23" width="18" height="5" rx="2.5"/>' +
+  '<rect x="2" y="25" width="12" height="20" rx="2"/>' +
+  '<rect x="50" y="25" width="12" height="20" rx="2"/>' +
+  '<path d="' + HAND_R + '"/>' +
+  '<path d="' + HAND_L + '"/>' +
+  '<path d="' + THUMB + '"/>' +
   '</g>' +
   INK +
-  '<rect x="3" y="27" width="11" height="15" rx="2" fill="#5a6a8a"/>' +
-  '<rect x="50" y="27" width="11" height="15" rx="2" fill="#8a6a5a"/>' +
-  '<rect x="12" y="27" width="24" height="18" rx="6" fill="#f1c7a4"/>' +
-  '<rect x="28" y="26" width="24" height="18" rx="6" fill="#d8a274"/>' +
-  '<rect x="30" y="29" width="18" height="4.5" rx="2.25" fill="#f1c7a4"/>' +
-  '<rect x="30" y="34.5" width="18" height="4.5" rx="2.25" fill="#f1c7a4"/>' +
-  '<rect x="30" y="40" width="18" height="4.5" rx="2.25" fill="#f1c7a4"/>' +
-  '<rect x="18" y="23" width="18" height="5" rx="2.5" fill="#d8a274"/>' +
+  '<rect x="2" y="25" width="12" height="20" rx="2" fill="#5a6a8a"/>' +
+  '<rect x="50" y="25" width="12" height="20" rx="2" fill="#8a6a5a"/>' +
+  '<path d="' + HAND_R + '" fill="#d8a274"/>' +
+  '<path d="M44 28 L50.5 28 L50.5 43 L44 43 Z" fill="#c48b5c" stroke="none"/>' +
+  '<path d="' + HAND_L + '" fill="#f1c7a4"/>' +
+  '<path d="' + FINGERS + '" fill="#f1c7a4"/>' +
+  '<path d="M37 33.5 L48.5 33.5 M37 39 L48.5 39" fill="none" stroke-width="2"/>' +
+  '<path d="' + THUMB + '" fill="#d8a274"/>' +
   END;
 
 const HAMMER =

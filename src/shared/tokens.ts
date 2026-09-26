@@ -4,13 +4,13 @@
 export interface TokenInfo { id: string; name: string; color: string; }
 
 export const TOKEN_LIST: TokenInfo[] = [
-  { id: 'hat', name: 'Top Hat', color: '#d9413a' },
-  { id: 'boat', name: 'Sailboat', color: '#2f7fd6' },
-  { id: 'dog', name: 'Dog', color: '#c9772b' },
-  { id: 'car', name: 'Race Car', color: '#e8b923' },
-  { id: 'cat', name: 'Cat', color: '#8e5bd1' },
-  { id: 'rocket', name: 'Rocket', color: '#1fa39b' },
-  { id: 'duck', name: 'Duck', color: '#e56aa3' },
+  { id: 'hat', name: 'Top Hat', color: '#8e5bc4' },
+  { id: 'boat', name: 'Sailboat', color: '#2f6fd6' },
+  { id: 'dog', name: 'Dog', color: '#c47a3c' },
+  { id: 'car', name: 'Race Car', color: '#d9413a' },
+  { id: 'cat', name: 'Cat', color: '#e8649c' },
+  { id: 'rocket', name: 'Rocket', color: '#2aa9a0' },
+  { id: 'duck', name: 'Rubber Duck', color: '#f2b632' },
   { id: 'robot', name: 'Robot', color: '#3aa655' },
 ];
 
