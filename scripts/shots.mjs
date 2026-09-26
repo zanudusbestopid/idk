@@ -9,7 +9,7 @@ const EXE = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-li
 await mkdir('shots', { recursive: true });
 const server = spawn('node', ['dist/paper-tycoon.js'], { env: { ...process.env, PORT: String(PORT) }, stdio: 'ignore' });
 await new Promise((r) => setTimeout(r, 700));
-const browser = await chromium.launch({ executablePath: EXE, headless: true });
+const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const errors = [];
 async function mk(name, viewport) {
   const ctx = await browser.newContext({ viewport });
@@ -37,7 +37,7 @@ await p2.screenshot({ path: 'shots/mobile-lobby.png' });
 await p1.click('.rule:has-text("Turn timer") select');
 await p1.selectOption('.rule:has-text("Turn timer") select', '90');
 await p1.click('text=Start game');
-await Promise.all([p1, p2].map((p) => p.waitForSelector('.game .board')));
+await Promise.all([p1, p2].map((p) => p.waitForSelector('.game .board, .game .board3d-wrap')));
 await p1.waitForTimeout(500);
 
 async function tryClick(page, sel) { try { await page.click(sel, { timeout: 2500 }); return true; } catch { return false; } }

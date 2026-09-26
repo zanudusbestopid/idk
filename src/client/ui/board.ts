@@ -52,9 +52,24 @@ function spaceIcon(space: Space): string | null {
   }
 }
 
+/** What the game screen needs from a board renderer (flat DOM board or 3D scene). */
+export interface BoardView {
+  readonly wrap: HTMLElement;
+  build(state: GameState): void;
+  resize(): void;
+  updateStatic(state: GameState): void;
+  placeTokens(state: GameState, animate: boolean): void;
+  moveToken(playerId: string, from: number, to: number, opts: { direct?: boolean; backward?: boolean }, state: GameState): Promise<void>;
+  flash(index: number): void;
+  highlight(index: number | null): void;
+  showDice(dice: [number, number], animate: boolean): Promise<void>;
+  drawCard?(deck: 'chance' | 'chest'): void;
+  destroy?(): void;
+}
+
 const SLOT_OFFSETS: [number, number][] = [[0, 0.05], [-0.3, -0.18], [0.3, -0.18], [-0.3, 0.28], [0.3, 0.28], [0, -0.32], [-0.32, 0.05], [0.32, 0.05]];
 
-export class Board {
+export class Board implements BoardView {
   readonly wrap: HTMLElement;
   readonly board: HTMLElement;
   readonly spaces: HTMLElement[] = [];
@@ -68,6 +83,8 @@ export class Board {
   private onSpaceClick: (index: number) => void;
   private state: GameState | null = null;
 
+  private ro: ResizeObserver;
+
   constructor(onSpaceClick: (index: number) => void) {
     this.onSpaceClick = onSpaceClick;
     this.board = h('div', { class: 'board' });
@@ -75,7 +92,13 @@ export class Board {
     this.bannerWho = h('span', { class: 'who' });
     this.banner = h('div', { class: 'turn-banner paper paper--flat' }, this.bannerWho, h('span', null, "'s turn"));
     this.pot = h('div', { class: 'pot paper paper--flat hidden' });
-    new ResizeObserver(() => this.resize()).observe(this.wrap);
+    this.ro = new ResizeObserver(() => this.resize());
+    this.ro.observe(this.wrap);
+  }
+
+  destroy(): void {
+    this.ro.disconnect();
+    this.wrap.remove();
   }
 
   build(state: GameState): void {

@@ -16,7 +16,7 @@ server.stdout.on('data', (d) => process.stdout.write(`[server] ${d}`));
 server.stderr.on('data', (d) => process.stderr.write(`[server] ${d}`));
 await new Promise((r) => setTimeout(r, 800));
 
-const browser = await chromium.launch({ executablePath: EXE, headless: true });
+const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const errors = [];
 const names = ['Ava', 'Ben', 'Cleo'];
 const pages = [];
@@ -52,7 +52,7 @@ await p1.click('.rule:has-text("Free Parking jackpot") .switch');
 await p1.waitForTimeout(150);
 if (SHOTS) await p1.screenshot({ path: 'shots/lobby.png' });
 await p1.click('text=Start game');
-await Promise.all(pages.map((p) => p.waitForSelector('.game .board')));
+await Promise.all(pages.map((p) => p.waitForSelector('.game .board, .game .board3d-wrap')));
 await p1.waitForTimeout(800);
 if (SHOTS) await p1.screenshot({ path: 'shots/game-start.png' });
 

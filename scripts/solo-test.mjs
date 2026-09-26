@@ -9,7 +9,7 @@ const TURN_LIMIT = Number(process.argv[2]) || 40;
 const SHOTS = process.argv.includes('--shots');
 const EXE = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 await mkdir('shots', { recursive: true });
-const browser = await chromium.launch({ executablePath: EXE, headless: true });
+const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
 await ctx.route(/^https?:/, (r) => r.abort());
 const page = await ctx.newPage();
@@ -23,7 +23,7 @@ await page.fill('#setup-name', 'Ava');
 await page.click('.token-pick[title="Rubber Duck"]');
 await page.click('.rule:has-text("Free Parking jackpot") .switch');
 await page.click('#setup-start');
-await page.waitForSelector('.game .board');
+await page.waitForSelector('.game .board, .game .board3d-wrap');
 await page.waitForTimeout(600);
 if (SHOTS) await page.screenshot({ path: 'shots/solo-start.png' });
 
@@ -104,7 +104,7 @@ await page.waitForSelector('#setup-start');
 const canResume = await page.locator('#setup-resume').count();
 console.log(`played ${lastTurn} turns in ${((Date.now() - start) / 1000).toFixed(1)}s, game over: ${over}, resume offered after reload: ${!!canResume}`);
 if (!over && !canResume) errors.push('no resume offered after reload');
-if (canResume) { await page.click('#setup-resume'); await page.waitForSelector('.game .board'); if (SHOTS) await page.screenshot({ path: 'shots/solo-resumed.png' }); }
+if (canResume) { await page.click('#setup-resume'); await page.waitForSelector('.game .board, .game .board3d-wrap'); if (SHOTS) await page.screenshot({ path: 'shots/solo-resumed.png' }); }
 const uniq = [...new Set(errors)];
 if (uniq.length) { console.log('ERRORS:'); for (const e of uniq) console.log(' -', e); }
 await browser.close();

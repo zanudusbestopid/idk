@@ -5,7 +5,8 @@ import { dieFace } from '../art/dice.js';
 import { ICONS } from '../art/icons.js';
 import { isMuted, setMuted, sfx } from '../audio.js';
 import { append, h, clear, money, sleep, toast } from '../dom.js';
-import { Board, spaceColor } from './board.js';
+import { Board, spaceColor, type BoardView } from './board.js';
+import { Board3D, webglAvailable } from './board3d.js';
 import {
   AuctionView, DebtView, ManageView, Modals, TradeComposer, buyContent, confetti, confirmDialog, deedViewerContent, incomingTradeContent,
   nameTag, openTradesContent, playerName, showCard, standingsContent,
@@ -21,6 +22,7 @@ export interface GameHandlers {
 
 export interface GameScreenOptions {
   chat?: boolean;            // show the chat box (default true)
+  board3d?: boolean;         // start with the 3D board (default true when WebGL works)
   onIdle?: () => void;       // called whenever animations have drained and the screen shows the latest state
   restartLabel?: string;     // label of the host's button on the standings dialog
   leaveText?: string;        // confirmation text for the Leave button
@@ -29,7 +31,9 @@ export interface GameScreenOptions {
 export class GameScreen {
   private root: HTMLElement;
   private handlers: GameHandlers;
-  private board: Board;
+  private board: BoardView;
+  private boardHost = h('div', { class: 'game__board' });
+  private mode3d = false;
   private playersEl = h('div', { class: 'game__players' });
   private actionsEl = h('div', { class: 'actions paper paper--flat' });
   private logEl = h('div', { class: 'log' });
@@ -63,24 +67,48 @@ export class GameScreen {
     // click cannot send the same action twice.
     this.handlers = { ...handlers, send: (a) => { this.lockButtons(); handlers.send(a); } };
     clear(root);
-    this.board = new Board((i) => this.openDeed(i));
+    this.mode3d = (opts.board3d ?? true) && webglAvailable() && loadBoardPref() !== '2d';
+    this.board = this.makeBoard();
+    this.boardHost.appendChild(this.board.wrap);
     const chatForm = h('form', { class: 'chatform', onSubmit: (e: Event) => { e.preventDefault(); const t = this.chatInput.value.trim(); if (t) { handlers.chat(t); this.chatInput.value = ''; } } },
       this.chatInput, h('button', { class: 'btn btn--sm', type: 'submit' }, 'Send'));
     const muteBtn = h('button', { class: 'btn btn--sm', type: 'button', title: 'Toggle sound' }, isMuted() ? '🔇' : '🔊');
     muteBtn.addEventListener('click', () => { setMuted(!isMuted()); muteBtn.textContent = isMuted() ? '🔇' : '🔊'; });
     const leaveBtn = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => confirmDialog(this.modals, opts.leaveText ?? 'Leave the game? If it is still running you will forfeit.', () => this.handlers.leave(), 'Leave') }, 'Leave');
+    const viewBtn = h('button', { class: 'btn btn--sm', type: 'button', title: 'Switch between the 3D and flat board' }, this.mode3d ? '2D' : '3D');
+    viewBtn.addEventListener('click', () => { this.switchBoard(!this.mode3d); viewBtn.textContent = this.mode3d ? '2D' : '3D'; });
+    if (!webglAvailable()) viewBtn.classList.add('hidden');
     const logbox = h('div', { class: 'logbox paper paper--flat' },
-      h('h3', null, opts.chat === false ? 'Log' : 'Log & chat', h('span', { class: 'topbar' }, muteBtn, leaveBtn)),
+      h('h3', null, opts.chat === false ? 'Log' : 'Log & chat', h('span', { class: 'topbar' }, viewBtn, muteBtn, leaveBtn)),
       this.logEl, opts.chat === false ? null : chatForm);
     root.appendChild(h('div', { class: 'game' },
       this.playersEl,
-      h('div', { class: 'game__board' }, this.board.wrap),
+      this.boardHost,
       h('div', { class: 'game__actions' }, this.actionsEl),
       h('div', { class: 'game__log' }, logbox)));
     this.timerHandle = window.setInterval(() => this.tickTimer(), 500);
   }
 
   private locked: HTMLButtonElement[] = [];
+  private makeBoard(): BoardView {
+    if (this.mode3d) {
+      try { return new Board3D((i) => this.openDeed(i)); } catch (e) { console.warn('3D board unavailable', e); this.mode3d = false; }
+    }
+    return new Board((i) => this.openDeed(i));
+  }
+
+  /** Swap between the 3D scene and the flat board, keeping the current state. */
+  private switchBoard(to3d: boolean): void {
+    if (to3d === this.mode3d) return;
+    this.board.destroy?.();
+    this.mode3d = to3d;
+    saveBoardPref(to3d ? '3d' : '2d');
+    this.board = this.makeBoard();
+    clear(this.boardHost);
+    this.boardHost.appendChild(this.board.wrap);
+    if (this.state) { this.board.build(this.state); }
+  }
+
   private lockButtons(): void {
     this.locked = [];
     document.querySelectorAll<HTMLButtonElement>('.dialog button, .actions button').forEach((b) => { if (!b.disabled) { b.disabled = true; this.locked.push(b); } });
@@ -96,6 +124,7 @@ export class GameScreen {
   destroy(): void {
     if (this.timerHandle) clearInterval(this.timerHandle);
     this.modals.closeAll();
+    this.board.destroy?.();
   }
 
   setRoom(room: RoomView): void { this.room = room; }
@@ -169,6 +198,8 @@ export class GameScreen {
         await sleep(250);
         return;
       case 'card':
+        this.board.drawCard?.(ev.deck);
+        await sleep(350);
         await showCard(this.modals, ev.deck, ev.text);
         return;
       case 'bought':
@@ -455,4 +486,11 @@ function describeEvent(ev: GameEvent, state: GameState): (string | HTMLElement)[
     case 'gameOver': return [h('b', null, '🏆 '), n(ev.winner), ' wins the game!'];
     default: return null;
   }
+}
+
+function loadBoardPref(): '2d' | '3d' | null {
+  try { const v = localStorage.getItem('pt.board'); return v === '2d' || v === '3d' ? v : null; } catch { return null; }
+}
+function saveBoardPref(v: '2d' | '3d'): void {
+  try { localStorage.setItem('pt.board', v); } catch { /* ignore */ }
 }
