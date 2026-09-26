@@ -556,3 +556,6 @@ body[data-theme="mario"] .log .entry { border-radius: 0; }
 body[data-theme="mario"] .tag { border-radius: 0; font-family: "Press Start 2P", var(--font-ui); font-size: 0.56em; padding: 0.45em 0.5em; }
 body[data-theme="mario"] .cam-bar .btn, body[data-theme="mario"] .topbar .btn { font-size: 0.55em; }
 .card-pop .card-head img.card-icon { width: 40px; height: 40px; image-rendering: pixelated; object-fit: contain; }
+.title-art--logo .title-logo { display: block; width: min(100%, 12em); height: auto; image-rendering: pixelated; margin: 0 auto 0.15em; }
+.title-hero .title-art--logo .title-logo { margin-left: 0; width: min(100%, 11em); }
+body[data-theme="mario"] .title-art--logo span { color: #fbd000; font-size: 0.72em; }

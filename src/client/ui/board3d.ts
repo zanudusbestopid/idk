@@ -16,7 +16,7 @@ import { pixelCutout } from './cutout.js';
 import { getCharacter, type Character } from '../sprites.js';
 import type { FrameName } from '../art/sprites.js';
 import { dur } from '../settings.js';
-import { drawSprite, packReady, spriteCanvas, stackCanvas, stripSprite, tileSprite } from '../art/pack.js';
+import { drawSprite, packReady, sprite as packSprite, spriteCanvas, stackCanvas, stripSprite, tileSprite, type StripParts } from '../art/pack.js';
 import { THEME, T, deckName } from '../theme.js';
 import { money } from '../dom.js';
 
@@ -129,6 +129,20 @@ const SKY = '#6fa8ff';
 const PIXEL_INK = '#161616';
 const GROUND = { left: 'ground_l', mid: 'ground_m', right: 'ground_r' };
 const BUSH = { left: 'bush_l', mid: 'bush_m', right: 'bush_r' };
+
+/** Per-space ground strip (a tile name repeated, or an edge/middle/edge set) and a decoration, by space index. */
+const WORLD_STRIP: Record<number, string | StripParts> = {
+  3: 'cave_top', 6: 'water3_top', 8: 'wood3_top', 9: 'sky_platform',
+  11: 'g3_top', 13: 'o3_top', 14: 't3_top', 16: 'water3_top', 18: 'sand_top', 19: 'sky_platform',
+  21: 'g3_top', 23: 'sand_top', 24: 'water3_top', 26: 'snow_top', 27: 'sky_platform', 29: 'brick3',
+  31: 'wood_block', 32: 'sky_platform', 34: 'g3_top', 37: 'lava3', 39: 'castle_wall',
+};
+const WORLD_DECOR: Record<number, { name: string; h: number }> = {
+  1: { name: 'hill3_green', h: 54 }, 3: { name: 'cave_block', h: 44 }, 6: { name: 'giant_coral', h: 40 }, 8: { name: 'treetop_green', h: 30 }, 9: { name: 'cloud3_face', h: 40 },
+  11: { name: 'bumps3_green', h: 30 }, 13: { name: 'hill3_orange', h: 54 }, 14: { name: 'bumps3_tan', h: 30 }, 16: { name: 'giant_coral', h: 40 }, 18: { name: 'palm', h: 60 }, 19: { name: 'cloud3_big', h: 34 },
+  21: { name: 'bushes3', h: 30 }, 23: { name: 'pyramid2', h: 48 }, 24: { name: 'cave_water_block', h: 44 }, 26: { name: 'snow_cloud', h: 40 }, 27: { name: 'sky_platform', h: 22 }, 29: { name: 'gold_block', h: 34 },
+  31: { name: 'giant_q', h: 48 }, 32: { name: 'giant_cloud', h: 46 }, 34: { name: 'giant_pipe', h: 52 }, 37: { name: 'dungeon_lantern', h: 48 }, 39: { name: 'throne', h: 64 },
+};
 
 /** Open ground for the pixel theme: a two-tone green checker. */
 function grassTexture(): THREE.CanvasTexture {
@@ -555,8 +569,12 @@ export class Board3D implements BoardView {
     mk(spriteCanvas('castle_big', 1), far + 4.5, 0, -far - 2.5, 4.2); mk(spriteCanvas('castle_small', 1), -far - 3.5, 0, far + 1.5, 2.6);
     mk(strip(BUSH, 3), -far - 0.3, 0, 2, 0.75); mk(strip(BUSH, 2), far + 0.4, 0, -2.5, 0.7); mk(strip(BUSH, 4), -3, 0, far + 0.6, 0.85); mk(strip(BUSH, 2), 7.5, 0, far + 0.9, 0.7); mk(strip(BUSH, 3), 6, 0, -far - 0.5, 0.75); mk(strip(BUSH, 2), -far - 0.5, 0, -far, 0.7);
     mk(stackCanvas(['pipe_top', 'pipe_body', 'pipe_body'], 1), far + 0.6, 0, 7.5, 1.6); mk(stackCanvas(['pipe_top', 'pipe_body'], 1), -far - 0.8, 0, -7, 1.1);
+    mk(spriteCanvas('hill3_green', 1), -far - 5, 0, 1, 2.6); mk(spriteCanvas('hill3_stripe', 1), far + 5.5, 0, -3, 3.4); mk(spriteCanvas('hill3_orange', 1), 8, 0, -far - 5, 2.4);
+    mk(spriteCanvas('bumps3_green', 1), -far - 2, 0, -9, 0.9); mk(spriteCanvas('bushes3', 1), far + 2.2, 0, 9.5, 0.9); mk(spriteCanvas('bumps3_tan', 1), -9, 0, far + 3, 0.9);
+    mk(spriteCanvas('pyramid_big', 1), far + 8, 0, 9, 3); mk(spriteCanvas('pyramid3', 1), far + 11, 0, 6.5, 2.2); mk(spriteCanvas('palm', 1), far + 6, 0, 11, 2.2);
+    mk(spriteCanvas('giant_pipe', 1), -far - 7, 0, -12, 2.8); mk(spriteCanvas('giant_q', 1), -far - 3.5, 2.2, -14, 1.2); mk(spriteCanvas('cactus', 1), far + 9.5, 0, 11.5, 0.6);
     const before = this.props.length;
-    mk(spriteCanvas('cloud_big', 1), -far - 3, 4.2, far - 3, 2); mk(spriteCanvas('cloud_mid', 1), far + 3, 5, -1, 1.8); mk(spriteCanvas('cloud_small', 1), 1, 5.6, -far - 4, 1.2); mk(spriteCanvas('cloud_big', 1), far * 0.6, 4.6, far + 3.5, 2.1); mk(spriteCanvas('cloud_mid', 1), -far * 0.7, 5.4, -far - 3, 1.6);
+    mk(spriteCanvas('cloud3_face', 1), -far - 3, 4.2, far - 3, 2); mk(spriteCanvas('cloud_mid', 1), far + 3, 5, -1, 1.8); mk(spriteCanvas('cloud3_big', 1), 1, 5.6, -far - 4, 1.6); mk(spriteCanvas('cloud_big', 1), far * 0.6, 4.6, far + 3.5, 2.1); mk(spriteCanvas('cloud3_face', 1), -far * 0.7, 5.4, -far - 3, 1.7); mk(spriteCanvas('giant_cloud', 1), far + 6, 6.5, 2, 2.2);
     for (const p of this.props.slice(before)) p.setFloating(p.group.position.y);
     // a loose ring of bigger hills further out; the fog hazes them into the horizon
     const ring = [[0, 26, 5.5], [45, 30, 4.5], [95, 27, 6], [140, 31, 5], [185, 26, 5.5], [225, 30, 4.8], [275, 28, 6], [320, 31, 5]];
@@ -691,22 +709,30 @@ export class Board3D implements BoardView {
     const x0 = inner + 8, x1 = TEX - inner - 8, y1 = TEX - inner - 8;
     // ground along the bottom of the middle, hills and bushes on it, clouds above
     stripSprite(ctx, GROUND, x0, y1 - 48, x1 - x0, 48, 3);
-    drawSprite(ctx, 'hill', x0 + 20, y1 - 48 - 190, 64 * 6, 32 * 6);
-    drawSprite(ctx, 'hill', x1 - 20 - 64 * 4, y1 - 48 - 128, 64 * 4, 32 * 4);
-    drawSprite(ctx, 'hill_small', x0 + 560, y1 - 48 - 96, 32 * 3, 32 * 3);
+    drawSprite(ctx, 'hill3_green', x0 + 20, y1 - 48 - 240, 48 * 5, 48 * 5);
+    drawSprite(ctx, 'hill3_stripe', x1 - 20 - 32 * 4, y1 - 48 - 64 * 4, 32 * 4, 64 * 4);
+    drawSprite(ctx, 'bumps3_green', x0 + 520, y1 - 48 - 48, 48 * 3, 16 * 3);
+    drawSprite(ctx, 'bushes3', x1 - 560, y1 - 48 - 48, 48 * 3, 16 * 3);
     stripSprite(ctx, BUSH, x0 + 430, y1 - 48 - 48, 16 * 3 * 5, 16 * 3, 3);
     stripSprite(ctx, BUSH, x1 - 420, y1 - 48 - 48, 16 * 3 * 3, 16 * 3, 3);
     drawSprite(ctx, 'castle_small', x1 - 300, y1 - 48 - 80 * 3, 96 * 3, 80 * 3);
-    drawSprite(ctx, 'cloud_small', x0 + 90, inner + 70, 48 * 4, 16 * 4);
-    drawSprite(ctx, 'cloud_big', x1 - 380, inner + 40, 48 * 5, 32 * 5);
+    drawSprite(ctx, 'cloud3_face', x0 + 90, inner + 70, 48 * 4, 32 * 4);
+    drawSprite(ctx, 'cloud3_big', x1 - 380, inner + 40, 48 * 5, 32 * 5);
     drawSprite(ctx, 'cloud_mid', x0 + 560, inner + 190, 32 * 4, 32 * 4);
-    drawSprite(ctx, 'cloud_small', x1 - 700, inner + 120, 48 * 4, 16 * 4);
+    drawSprite(ctx, 'cloud3_face', x1 - 700, inner + 130, 48 * 3, 32 * 3);
     for (let i = 0; i < 5; i++) drawSprite(ctx, i % 2 ? 'coin' : 'coin2', x0 + 520 + i * 60, y1 - 48 - 330, 40, 40);
     // logo
     const [t1, t2] = THEME.title;
     const cx = TEX / 2, cy = TEX / 2 - 250;
-    pixelTitle(ctx, t1, cx, cy - 70, 96, '#e52521');
-    pixelTitle(ctx, t2, cx, cy + 70, 150, '#fbd000');
+    const logo = packSprite('logo');
+    if (logo) {
+      const lw = 1040, lh = lw * logo.h / logo.w;
+      drawSprite(ctx, 'logo', cx - lw / 2, cy - lh + 20, lw, lh);
+      pixelTitle(ctx, t2, cx, cy + 95, 132, '#fbd000');
+    } else {
+      pixelTitle(ctx, t1, cx, cy - 70, 96, '#e52521');
+      pixelTitle(ctx, t2, cx, cy + 70, 150, '#fbd000');
+    }
     for (const space of state.board) this.drawThemedSpace(ctx, space);
   }
 
@@ -737,8 +763,10 @@ export class Board3D implements BoardView {
       else if (edge === 'left') { ctx.translate(left + b, 0); ctx.rotate(Math.PI / 2); }
       else { ctx.translate(left + iw - b, 0); ctx.rotate(-Math.PI / 2); }
       if (lava) { ctx.fillStyle = '#c8321e'; ctx.fillRect(-len / 2, -gh, len, gh); }
+      const ws = WORLD_STRIP[i];
       if (lava) tileSprite(ctx, 'lava_top', -len / 2, -gh, len, gh, gh / 16);
-      else stripSprite(ctx, GROUND, -len / 2, -gh, len, gh, gh / 16);
+      else if (typeof ws === 'string') tileSprite(ctx, ws, -len / 2, -gh, len, gh, gh / 16);
+      else stripSprite(ctx, ws ?? GROUND, -len / 2, -gh, len, gh, gh / 16);
       ctx.restore();
     };
     const draw = (name: string, x: number, yy: number, sw: number, sh: number) => drawSprite(ctx, name, x, yy, sw, sh);
@@ -786,6 +814,7 @@ export class Board3D implements BoardView {
       return;
     }
     strip('bottom', false);
+    const gy = top + ih - b - gh;
     let y = top + b + 12;
     const textW = iw - 2 * b - 14;
     if (space.type === 'property') {
@@ -815,6 +844,12 @@ export class Board3D implements BoardView {
       ctx.textAlign = 'left'; ctx.fillText(text, x0 + 30, after + 6); ctx.textAlign = 'center';
     }
     if (space.type === 'tax') { ctx.font = `16px ${pixelFont()}`; ctx.fillText(`PAY ${space.amount}`, 0, after + 6); }
+    const deco = WORLD_DECOR[i];
+    const sp = deco ? packSprite(deco.name) : null;
+    if (deco && sp) {
+      const dh = Math.min(deco.h, gy - (after + 30) - 4);
+      if (dh > 14) { const dw = dh * sp.w / sp.h; drawSprite(ctx, deco.name, -dw / 2, gy - dh - 2, dw, dh); }
+    }
     ctx.restore();
   }
 

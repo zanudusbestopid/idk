@@ -8,6 +8,7 @@ import { tokenSvg } from './home.js';
 import { rulesPanel } from './rules.js';
 import { T, THEME } from '../theme.js';
 import { SHEET_HELP, getCustomSheetUrl, setCustomSheetUrl, warmCharacters } from '../sprites.js';
+import { titleArt } from './titleart.js';
 
 export interface SetupHandlers {
   onStart(setup: SoloSetup): void;
@@ -108,7 +109,7 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
     h('button', { class: 'btn btn--good', type: 'button', id: 'setup-resume', onClick: () => handlers.onResume(saved) }, 'Resume')) : null;
 
   const hero = h('div', { class: 'title-hero' },
-    h('h1', { class: 'title-art' }, h('span', null, THEME.title[0]), h('span', null, THEME.title[1])),
+    titleArt(),
     h('p', { class: 'tagline hand' }, THEME.tagline),
     resume);
   const fields = [

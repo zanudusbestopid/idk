@@ -88,14 +88,14 @@ async function act() {
   return null;
 }
 const start = Date.now();
-let lastTurn = 0, stall = 0, over = false;
+let lastTurn = 0, stall = 0, over = false, lastProgress = Date.now();
 for (let i = 0; i < TURN_LIMIT * 40 && !over; i++) {
   const r = await act();
   if (r === 'over') { over = true; break; }
   const turn = await page.evaluate(() => { const m = document.querySelector('.log')?.textContent?.match(/Turn (\d+)/g); return m ? Number(m[m.length - 1].slice(5)) : 0; }).catch(() => 0);
-  if (turn > lastTurn) { lastTurn = turn; stall = 0; if (turn % 10 === 0) console.log(`turn ${turn} (${((Date.now() - start) / 1000).toFixed(0)}s)`); if (turn >= TURN_LIMIT) break; if (SHOTS && turn % 20 === 0) await page.screenshot({ path: `shots/solo-turn-${String(turn).padStart(3, '0')}.png` }); }
+  if (turn > lastTurn) { lastTurn = turn; stall = 0; lastProgress = Date.now(); if (turn % 10 === 0) console.log(`turn ${turn} (${((Date.now() - start) / 1000).toFixed(0)}s)`); if (turn >= TURN_LIMIT) break; if (SHOTS && turn % 20 === 0) await page.screenshot({ path: `shots/solo-turn-${String(turn).padStart(3, '0')}.png` }); }
   else if (!r) stall++;
-  if (stall > 160) { errors.push(`stalled at turn ${turn}`); break; }
+  if (stall > 160 && Date.now() - lastProgress > 150_000) { errors.push(`stalled at turn ${turn}`); if (SHOTS) await page.screenshot({ path: 'shots/solo-stall.png' }); break; }
   if (errors.length > 20) break;
   await page.waitForTimeout(r ? 200 : 350);
 }
