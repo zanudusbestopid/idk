@@ -1,7 +1,7 @@
 // In-browser game: the rules engine runs locally, the human is one seat and the
 // computer players take the others. No server involved.
 
-import { chooseBotAction } from '../engine/bot.js';
+import { chooseBotAction, type Difficulty } from '../engine/bot.js';
 import { applyAction, createGame, type ActionResult } from '../engine/engine.js';
 import type { Action, GameConfig, GameEvent, GameState } from '../shared/types.js';
 import { TOKEN_BY_ID, TOKEN_LIST } from '../shared/tokens.js';
@@ -14,6 +14,7 @@ export interface SoloSetup {
   token: string;
   bots: { name: string; token: string }[];
   config: Partial<GameConfig>;
+  difficulty?: Difficulty;
 }
 
 export const BOT_NAMES = ['Otto', 'Penny', 'Marge', 'Rex', 'Ivy', 'Bruno', 'Dot'];
@@ -49,6 +50,7 @@ export class LocalGame {
   private timer: number | null = null;
   private pending: { id: string; action: Action } | null = null;
   private destroyed = false;
+  private paused = false;
 
   constructor(setup: SoloSetup, state?: GameState) {
     this.setup = setup;
@@ -82,8 +84,14 @@ export class LocalGame {
   }
 
   /** The screen has caught up with the latest state: let a computer player move if one must. */
+  /** While paused no computer player moves; resuming picks up where it left off. */
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+    if (paused) this.cancelPending(); else this.idle();
+  }
+
   idle(): void {
-    if (this.destroyed || this.timer !== null) return;
+    if (this.destroyed || this.paused || this.timer !== null) return;
     if (this.state.phase === 'ended') { clearSaved(); return; }
     const next = this.nextBotMove();
     if (!next) return;
@@ -98,7 +106,7 @@ export class LocalGame {
     for (let k = 0; k < n; k++) {
       const p = this.state.players[(this.state.currentPlayer + k) % n];
       if (p.id === HUMAN_ID || p.bankrupt) continue;
-      const action = chooseBotAction(this.state, p.id);
+      const action = chooseBotAction(this.state, p.id, Math.random, { difficulty: this.setup.difficulty ?? 'normal' });
       if (action) return { id: p.id, action };
     }
     return null;
@@ -113,6 +121,13 @@ export class LocalGame {
     this.state = r.state;
     this.save();
     this.onState(this.state, r.events);
+  }
+
+  /** Test hook: apply an action as any player (used by the screenshot scripts to force situations). */
+  debugApply(playerId: string, action: Action): ActionResult {
+    const r = applyAction(this.state, playerId, action);
+    if (r.ok) { this.cancelPending(); this.state = r.state; this.save(); this.onState(this.state, r.events); }
+    return r;
   }
 
   private cancelPending(): void {

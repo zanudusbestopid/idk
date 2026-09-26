@@ -9,8 +9,9 @@ import { Board, spaceColor, type BoardView } from './board.js';
 import { Board3D, webglAvailable } from './board3d.js';
 import {
   AuctionView, DebtView, ManageView, Modals, TradeComposer, buyContent, confetti, confirmDialog, deedViewerContent, incomingTradeContent,
-  nameTag, openTradesContent, playerName, showCard, standingsContent,
+  nameTag, openTradesContent, pauseContent, playerName, showCard, standingsContent,
 } from './dialogs.js';
+import { dur, getSettings } from '../settings.js';
 import { tokenSvg } from './home.js';
 
 export interface GameHandlers {
@@ -27,6 +28,7 @@ export interface GameScreenOptions {
   onIdle?: () => void;       // called whenever animations have drained and the screen shows the latest state
   restartLabel?: string;     // label of the host's button on the standings dialog
   leaveText?: string;        // confirmation text for the Leave button
+  onPause?: (paused: boolean) => void; // single player: stop the computer players while the menu is open
 }
 
 export class GameScreen {
@@ -57,6 +59,9 @@ export class GameScreen {
   private incomingShown: string | null = null;
   private gameOverShown = false;
   private lastLogCount = 0;
+  private paused = false;
+  private keyHandler = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); if (this.paused) this.resume(); else if (!this.modals.has('over')) this.openPause(); } };
+  private turnToast = h('div', { class: 'turn-toast hidden' });
 
   private opts: GameScreenOptions;
 
@@ -89,6 +94,27 @@ export class GameScreen {
       h('div', { class: 'game__actions' }, this.actionsEl),
       h('div', { class: 'game__log' }, logbox)));
     this.timerHandle = window.setInterval(() => this.tickTimer(), 500);
+    this.boardHost.appendChild(this.turnToast);
+    document.addEventListener('keydown', this.keyHandler);
+  }
+
+  openPause(): void {
+    if (!this.state || this.paused) return;
+    this.paused = true;
+    this.opts.onPause?.(true);
+    const content = pauseContent(this.state, this.mode3d, {
+      onResume: () => this.resume(),
+      onCamera: (m) => this.board.setCameraMode?.(m),
+      onQuit: () => confirmDialog(this.modals, this.opts.leaveText ?? 'Leave the game?', () => { this.resume(); this.handlers.leave(); }, 'Quit'),
+    });
+    this.modals.show('pause', content, { dismissible: true, onClose: () => { if (this.paused) this.resume(); } });
+  }
+
+  private resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    if (this.modals.has('pause')) this.modals.close('pause');
+    this.opts.onPause?.(false);
   }
 
   private locked: HTMLButtonElement[] = [];
@@ -109,6 +135,7 @@ export class GameScreen {
     this.board = this.makeBoard();
     clear(this.boardHost);
     this.boardHost.appendChild(this.board.wrap);
+    this.board.setViewer?.(this.meId);
     if (this.state) { this.board.build(this.state); }
   }
 
@@ -126,8 +153,45 @@ export class GameScreen {
 
   destroy(): void {
     if (this.timerHandle) clearInterval(this.timerHandle);
+    document.removeEventListener('keydown', this.keyHandler);
     this.modals.closeAll();
     this.board.destroy?.();
+  }
+
+  /** Paper banner over the board announcing whose turn it is. */
+  private showTurnToast(name: string, color: string, mine: boolean): void {
+    const el = this.turnToast;
+    clear(el);
+    el.append(h('span', { class: 'who', style: { color } }, mine ? 'Your' : `${name}'s`), ' turn');
+    el.classList.remove('hidden', 'is-out'); void el.offsetWidth; el.classList.add('is-in');
+    window.setTimeout(() => { el.classList.remove('is-in'); el.classList.add('is-out'); }, dur(1400));
+    window.setTimeout(() => el.classList.add('hidden'), dur(1400) + 500);
+  }
+
+  /** A little deed card flies from the board to the buyer's panel. */
+  private flyDeed(space: number, playerId: string): void {
+    const s = this.state?.board[space];
+    const target = this.playersEl.querySelector(`[data-player="${playerId}"]`) as HTMLElement | null;
+    if (!s || !target) return;
+    const from = this.boardHost.getBoundingClientRect();
+    const to = target.getBoundingClientRect();
+    const W = 150, H = 100;
+    const el = h('div', { class: 'deed-fly paper paper--flat' }, h('div', { class: 'band', style: { background: spaceColor(s) } }), h('div', { class: 'nm' }, s.name));
+    el.style.left = `${from.left + from.width / 2 - W / 2}px`;
+    el.style.top = `${from.top + from.height / 2 - H / 2}px`;
+    document.body.appendChild(el);
+    const dx = to.left + to.width / 2 - (from.left + from.width / 2);
+    const dy = to.top + to.height / 2 - (from.top + from.height / 2);
+    const anim = el.animate([
+      { transform: 'scale(1.1) rotate(-6deg)', opacity: 0 },
+      { transform: 'scale(1.1) rotate(-6deg)', opacity: 1, offset: 0.15 },
+      { transform: `translate(${dx}px, ${dy}px) scale(0.35) rotate(8deg)`, opacity: 1, offset: 0.9 },
+      { transform: `translate(${dx}px, ${dy}px) scale(0.2) rotate(8deg)`, opacity: 0 },
+    ], { duration: dur(900), easing: 'cubic-bezier(.3,.8,.4,1)', fill: 'forwards' });
+    const done = () => { el.remove(); target.classList.remove('bump'); void target.offsetWidth; target.classList.add('bump'); };
+    anim.onfinish = done;
+    anim.oncancel = () => el.remove();
+    window.setTimeout(() => { if (el.isConnected) done(); }, dur(900) * 2 + 800);
   }
 
   setRoom(room: RoomView): void { this.room = room; }
@@ -158,8 +222,10 @@ export class GameScreen {
     const first = !this.state;
     this.state = state;
     if (first) {
+      this.board.setViewer?.(this.meId);
       this.board.build(state);
       for (const p of state.players) this.lastCash.set(p.id, p.cash);
+      if (this.mode3d) this.board.setCameraMode?.(getSettings().camera);
       // Show the existing log for late joiners / rejoins.
       for (const ev of state.log) this.appendLog(ev, state);
       this.lastLogCount = state.log.length;
@@ -193,33 +259,42 @@ export class GameScreen {
         return;
       case 'moved':
         await this.board.moveToken(ev.player, ev.from, ev.to, { direct: ev.direct, backward: (ev as { backwards?: boolean }).backwards }, state);
-        await sleep(120);
+        await sleep(dur(120));
         return;
       case 'paid':
         if (ev.to === this.meId) sfx.cash(); else if (ev.from === this.meId) sfx.pay();
         this.bumpCash(ev.from, -ev.amount); this.bumpCash(ev.to, ev.amount);
-        await sleep(250);
+        await sleep(dur(250));
         return;
       case 'card':
-        this.board.drawCard?.(ev.deck);
-        await sleep(350);
-        await showCard(this.modals, ev.deck, ev.text);
+        this.board.drawCard?.(ev.deck, ev.text);
+        await sleep(dur(this.mode3d ? 900 : 350));
+        await showCard(this.modals, ev.deck, ev.text, this.mode3d);
         return;
       case 'bought':
-        sfx.cash(); this.board.updateStatic(state); this.board.flash(ev.space); await sleep(250); return;
+        sfx.cash(); this.board.updateStatic(state); this.board.flash(ev.space); this.flyDeed(ev.space, ev.player); await sleep(dur(450)); return;
+      case 'auctionEnded':
+        this.board.updateStatic(state); this.renderPlayers(); if (ev.winner) { sfx.cash(); this.flyDeed(ev.space, ev.winner); } await sleep(dur(350)); return;
       case 'built': case 'soldHouse':
-        sfx.build(); this.board.updateStatic(state); await sleep(150); return;
-      case 'mortgaged': case 'unmortgaged': case 'auctionEnded': case 'tradeAccepted': case 'bankrupt':
-        this.board.updateStatic(state); this.renderPlayers(); await sleep(150); return;
+        sfx.build(); this.board.updateStatic(state); await sleep(dur(150)); return;
+      case 'mortgaged': case 'unmortgaged': case 'tradeAccepted': case 'bankrupt':
+        this.board.updateStatic(state); this.renderPlayers(); await sleep(dur(150)); return;
       case 'jailed':
-        sfx.jail(); this.board.updateStatic(state); await sleep(300); return;
-      case 'turnStarted':
+        sfx.jail(); this.board.updateStatic(state); await sleep(dur(300)); return;
+      case 'turnStarted': {
         this.board.updateStatic(state);
-        if (ev.player === this.meId) { sfx.turn(); toast('Your turn!'); }
+        const p = state.players.find((x) => x.id === ev.player);
+        if (p) this.showTurnToast(p.name, p.color, p.id === this.meId);
+        if (ev.player === this.meId) sfx.turn();
+        await sleep(dur(450));
         return;
+      }
       case 'freeParking':
-        sfx.cash(); await sleep(200); return;
+        sfx.cash(); await sleep(dur(200)); return;
       case 'gameOver':
+        this.board.celebrate?.(ev.winner);
+        if (ev.winner === this.meId) sfx.win(); else sfx.lose();
+        await sleep(this.mode3d ? 3200 : 600);
         return;
       default:
         return;
@@ -281,6 +356,7 @@ export class GameScreen {
     const state = this.state!;
     clear(this.actionsEl);
     const add = (...c: (Node | string | null | undefined)[]) => append(this.actionsEl, c);
+    add(h('button', { class: 'btn btn--sm btn--icon menu-btn', type: 'button', title: 'Menu (Esc)', 'aria-label': 'Menu', onClick: () => this.openPause() }, '☰'));
     const me = state.players.find((p) => p.id === this.meId);
     const busy = this.processing;
     const legal = me && !busy ? new Set(legalActions(state, this.meId)) : new Set<string>();
@@ -401,7 +477,7 @@ export class GameScreen {
       this.gameOverShown = true;
       this.modals.closeAll();
       const winner = state.players.find((p) => p.id === state.winner);
-      if (winner?.id === this.meId) { sfx.win(); confetti(state.players.map((p) => p.color)); } else sfx.lose();
+      if (winner?.id === this.meId && !this.mode3d) confetti(state.players.map((p) => p.color));
       this.modals.show('over', standingsContent(state, this.meId, this.room?.hostId === this.meId, this.handlers.leave, this.handlers.restart, this.opts.restartLabel), { dismissible: true });
     }
   }

@@ -12,6 +12,7 @@ import { h, clear, sleep } from '../dom.js';
 import { GROUP_COLORS, LIGHT_GROUPS, sideOf, spaceColor, type BoardView } from './board.js';
 import { tokenSvg } from './home.js';
 import { faceNumbers, simulateThrow } from './dicephysics.js';
+import { dur } from '../settings.js';
 
 const CORNER = 1.55;
 const HALF = (2 * CORNER + 9) / 2; // 6.05
@@ -208,7 +209,10 @@ export class Board3D implements BoardView {
   private pointerDown: { x: number; y: number } | null = null;
   private ro: ResizeObserver;
   // Camera director
-  private camMode: 'follow' | 'overview' | 'top' | 'free' | 'cinematic' = 'follow';
+  private camMode: 'follow' | 'overview' | 'top' | 'free' | 'cinematic' | 'victory' = 'follow';
+  private victoryId: string | null = null;
+  private victoryStart = 0;
+  private spot: THREE.SpotLight | null = null;
   private cinStart = performance.now();
   private cameraPlaced = false;
   private flyInUntil = 0;
@@ -254,6 +258,7 @@ export class Board3D implements BoardView {
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
     this.camera.position.copy(this.camPos);
+    this.scene.add(this.camera); // so objects attached to the camera (card reveals) render
     this.controls = new OrbitControls(this.camera, this.canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
@@ -504,10 +509,14 @@ export class Board3D implements BoardView {
   }
 
   setSpaceClick(fn: (index: number) => void): void { this.onSpaceClick = fn; }
+  private viewer: string | null = null;
+  setViewer(id: string | null): void { this.viewer = id; if (this.state) this.updateStatic(this.state); }
 
   // ---------- camera director ----------
 
-  setMode(mode: 'follow' | 'overview' | 'top' | 'free' | 'cinematic'): void {
+  setCameraMode(mode: 'follow' | 'overview' | 'top'): void { this.setMode(mode); }
+
+  setMode(mode: 'follow' | 'overview' | 'top' | 'free' | 'cinematic' | 'victory'): void {
     if (mode !== 'free' && this.camMode === 'free') {
       // resume from wherever the viewer left the camera
       this.camPos.copy(this.camera.position);
@@ -518,6 +527,7 @@ export class Board3D implements BoardView {
       this.flyInUntil = performance.now() + 2600; // long sweeping move from the title camera into the game
     }
     if (mode === 'cinematic') { this.cinStart = performance.now(); this.startAmbient(); }
+    if (mode !== 'victory' && this.spot) { this.scene.remove(this.spot, this.spot.target); this.spot = null; }
     this.camMode = mode;
     this.wrap.classList.toggle('is-cinematic', mode === 'cinematic');
     this.controls.enableZoom = mode === 'free';
@@ -567,7 +577,7 @@ export class Board3D implements BoardView {
   }
 
   private updateCamLabel(): void {
-    const who = this.state?.players.find((p) => p.id === this.followId)?.name;
+    const who = this.followId === this.viewer ? 'you' : this.state?.players.find((p) => p.id === this.followId)?.name;
     this.camLabel.textContent = this.camMode === 'follow' ? (who ? `Following ${who}` : '') : this.camMode === 'free' ? 'Free look · press Follow to return' : '';
   }
 
@@ -615,6 +625,15 @@ export class Board3D implements BoardView {
 
   private desiredPose(now: number, dt: number): { pos: THREE.Vector3; look: THREE.Vector3; tau: number } {
     if (this.camMode === 'cinematic') return { ...this.cinematicPose(now), tau: 1.3 };
+    if (this.camMode === 'victory') {
+      const tok = this.victoryId ? this.tokens.get(this.victoryId) : undefined;
+      if (tok) {
+        const a = (now - this.victoryStart) / 1000 * 0.45 + 0.8;
+        const p = tok.group.position;
+        return { pos: new THREE.Vector3(p.x + Math.sin(a) * 4.2, BOARD_Y + 2.6, p.z + Math.cos(a) * 4.2), look: new THREE.Vector3(p.x, BOARD_Y + 0.55, p.z), tau: 0.5 };
+      }
+      return { ...this.overviewPose(), tau: 0.6 };
+    }
     if (this.camMode === 'overview') return { ...this.overviewPose(), tau: 0.6 };
     if (this.camMode === 'top') return { ...this.topPose(), tau: 0.6 };
     // follow
@@ -700,13 +719,19 @@ export class Board3D implements BoardView {
       }
     }
     const cur = state.players[state.currentPlayer];
-    if (cur) { this.bannerWho.textContent = cur.name; this.banner.style.setProperty('--who', cur.color); (this.ring.material as THREE.MeshBasicMaterial).color.set(cur.color); }
+    if (cur) {
+      const mine = cur.id === this.viewer;
+      this.bannerWho.textContent = mine ? 'Your' : cur.name;
+      (this.banner.lastChild as HTMLElement).textContent = mine ? ' turn' : "'s turn";
+      this.banner.style.setProperty('--who', cur.color); (this.ring.material as THREE.MeshBasicMaterial).color.set(cur.color);
+    }
     if (cur && cur.id !== this.followId) { this.followId = cur.id; this.updateCamLabel(); }
     this.focusSpace = state.phase === 'auction' && state.auction ? state.auction.space : null;
     if (state.phase === 'ended' && state.winner) {
       const w = byId.get(state.winner);
-      this.bannerWho.textContent = w?.name ?? '';
-      (this.banner.lastChild as HTMLElement).textContent = ' wins!';
+      const mine = state.winner === this.viewer;
+      this.bannerWho.textContent = mine ? 'You' : (w?.name ?? '');
+      (this.banner.lastChild as HTMLElement).textContent = mine ? ' win!' : ' wins!';
       this.ring.visible = false;
       if (this.camMode === 'follow') this.setMode('overview');
     } else this.ring.visible = !!cur;
@@ -809,7 +834,7 @@ export class Board3D implements BoardView {
       this.setFacing(tok, this.facingFor(d.x, d.z, tok));
       // one big leap
       const startPos = tok.group.position.clone();
-      await new Promise<void>((resolve) => this.tweens.push(timed(650, (t) => {
+      await new Promise<void>((resolve) => this.tweens.push(timed(dur(650), (t) => {
         const k = easeInOut(t);
         tok.group.position.lerpVectors(startPos, target, k);
         tok.sprite.position.y = 0.47 + Math.sin(t * Math.PI) * 1.6;
@@ -820,7 +845,7 @@ export class Board3D implements BoardView {
     }
     const backward = opts.backward ?? ((from - to + 40) % 40 === 3);
     const steps = backward ? (from - to + 40) % 40 : (to - from + 40) % 40;
-    const stepMs = steps > 12 ? 110 : 190;
+    const stepMs = dur(steps > 12 ? 110 : 190);
     let pos = from;
     for (let s = 0; s < steps; s++) {
       pos = backward ? (pos + 39) % 40 : (pos + 1) % 40;
@@ -891,7 +916,7 @@ export class Board3D implements BoardView {
     const c = new THREE.Vector3((last[0][0] + last[1][0]) / 2, BOARD_Y + 0.3, (last[0][2] + last[1][2]) / 2);
     this.diceFocusPose = { pos: new THREE.Vector3(c.x + dir.x * 3.4, BOARD_Y + 2.9, c.z + dir.y * 3.4), look: c };
     const timeScale = Math.max(1, result.duration / 1.9);
-    const playMs = (result.duration / timeScale) * 1000;
+    const playMs = dur((result.duration / timeScale) * 1000);
     if (this.camMode === 'follow') this.diceFocusUntil = performance.now() + playMs + 350;
     sfx.dice();
     let nextImpact = 0;
@@ -923,21 +948,92 @@ export class Board3D implements BoardView {
     }, resolve)));
   }
 
-  drawCard(deck: 'chance' | 'chest'): void {
+  drawCard(deck: 'chance' | 'chest', text?: string): void {
     const x = deck === 'chance' ? -2.7 : 2.7;
-    const card = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.03, 0.92), new THREE.MeshLambertMaterial({ color: deck === 'chance' ? '#ffe1b3' : '#dff1fa' }));
-    const outline = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.03, 0.92), new THREE.MeshBasicMaterial({ color: INK, side: THREE.BackSide }));
-    outline.scale.set(1.04, 2.5, 1.06);
-    card.add(outline);
-    card.position.set(x, BOARD_Y + 0.12, 0.2);
+    const color = deck === 'chance' ? '#ffe1b3' : '#dff1fa';
+    // Card face: header + wrapped text
+    const c = document.createElement('canvas'); c.width = 512; c.height = 336;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = '#fffaf0'; ctx.fillRect(0, 0, 512, 336);
+    ctx.fillStyle = color; ctx.fillRect(0, 0, 512, 78);
+    ctx.lineWidth = 12; ctx.strokeStyle = INK; roundRect(ctx, 6, 6, 500, 324, 26); ctx.stroke();
+    ctx.fillStyle = INK; ctx.fillRect(0, 74, 512, 6);
+    ctx.font = `700 34px ${fontStack()}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(deck === 'chance' ? 'CHANCE' : 'COMMUNITY CHEST', 256, 40);
+    if (text) {
+      ctx.font = `500 30px ${fontStack()}`;
+      const lines = wrapText(ctx, text, 440);
+      lines.slice(0, 5).forEach((l, i) => ctx.fillText(l, 256, 130 + i * 40 - (Math.min(lines.length, 5) - 1) * 20 + 60));
+    }
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const mats = [new THREE.MeshLambertMaterial({ color: INK }), new THREE.MeshLambertMaterial({ color: INK }), new THREE.MeshLambertMaterial({ map: tex }), new THREE.MeshLambertMaterial({ color }), new THREE.MeshLambertMaterial({ color: INK }), new THREE.MeshLambertMaterial({ color: INK })];
+    const card = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.03, 0.985), mats);
     card.castShadow = true;
+    // World phase: lift off the deck and flip
+    card.position.set(x, BOARD_Y + 0.12, 0.2);
     this.scene.add(card);
-    this.tweens.push(timed(900, (t) => {
-      card.position.y = BOARD_Y + 0.12 + Math.sin(t * Math.PI) * 1.4;
-      card.position.x = x * (1 - t * 0.6);
-      card.rotation.z = t * Math.PI * 2 * (deck === 'chance' ? 1 : -1);
-      card.rotation.y = t * 0.6;
-    }, () => { this.scene.remove(card); }));
+    const lift = dur(700);
+    const hold = text ? dur(2600) : dur(500);
+    const camCard = new THREE.Group();
+    this.tweens.push(timed(lift, (t) => {
+      card.position.y = BOARD_Y + 0.12 + easeOut(t) * 1.6;
+      card.rotation.z = t * Math.PI * (deck === 'chance' ? 1 : -1);
+      card.rotation.y = t * 0.5;
+    }, () => {
+      // Camera phase: the card comes up in front of the viewer and stays readable
+      this.scene.remove(card);
+      card.position.set(0, -0.12, -2.4);
+      card.rotation.set(Math.PI / 2 + 0.08, 0, 0);
+      card.scale.setScalar(0.62);
+      camCard.add(card);
+      this.camera.add(camCard);
+      this.tweens.push(timed(hold, (t) => {
+        const inK = Math.min(1, t * 6);
+        camCard.position.y = (1 - easeOut(inK)) * -0.9;
+        card.rotation.z = Math.sin(t * 6) * 0.03 * (1 - t);
+        if (t > 0.85) { const k = (t - 0.85) / 0.15; camCard.position.y = -easeInOut(k) * 1.4; }
+      }, () => { this.camera.remove(camCard); tex.dispose(); mats.forEach((m) => m.dispose()); }));
+    }));
+  }
+
+  /** Winner's moment: the camera circles their token under a spotlight while paper confetti falls. */
+  celebrate(winnerId: string): void {
+    const tok = this.tokens.get(winnerId);
+    if (!tok) return;
+    this.victoryId = winnerId;
+    this.victoryStart = performance.now();
+    this.setMode('victory');
+    const p = tok.group.position;
+    const spot = new THREE.SpotLight(0xfff0c0, 60, 14, Math.PI / 8, 0.45, 1.3);
+    spot.position.set(p.x + 1.5, BOARD_Y + 6, p.z + 1.5);
+    spot.target.position.set(p.x, BOARD_Y, p.z);
+    spot.castShadow = false;
+    this.scene.add(spot, spot.target);
+    this.spot = spot;
+    // Confetti
+    const colors = ['#d9413a', '#2f7fd6', '#f2c94c', '#3aa655', '#e56aa3', '#8e5bd1', '#fffaf0'];
+    const group = new THREE.Group();
+    const bits: { m: THREE.Mesh; vx: number; vz: number; vr: number; y0: number; phase: number }[] = [];
+    for (let i = 0; i < 140; i++) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.2), new THREE.MeshBasicMaterial({ color: colors[i % colors.length], side: THREE.DoubleSide }));
+      const ang = Math.random() * Math.PI * 2, r = Math.random() * 2.6;
+      m.position.set(p.x + Math.cos(ang) * r, BOARD_Y + 3.5 + Math.random() * 3.5, p.z + Math.sin(ang) * r);
+      m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+      group.add(m);
+      bits.push({ m, vx: (Math.random() - 0.5) * 0.4, vz: (Math.random() - 0.5) * 0.4, vr: 2 + Math.random() * 4, y0: m.position.y, phase: Math.random() * 6 });
+    }
+    this.scene.add(group);
+    const fallMs = 6500;
+    this.tweens.push(timed(fallMs, (t, dt) => {
+      const sec = dt / 1000;
+      for (const b of bits) {
+        b.m.position.y -= 1.1 * sec;
+        b.m.position.x += (b.vx + Math.sin(t * 20 + b.phase) * 0.3) * sec;
+        b.m.position.z += (b.vz + Math.cos(t * 17 + b.phase) * 0.3) * sec;
+        b.m.rotation.x += b.vr * sec; b.m.rotation.z += b.vr * 0.6 * sec;
+        if (b.m.position.y < BOARD_Y + 0.02) b.m.position.y = BOARD_Y + 0.02;
+      }
+    }, () => { this.scene.remove(group); bits.forEach((b) => { b.m.geometry.dispose(); (b.m.material as THREE.Material).dispose(); }); }));
   }
 
   // ---------- interaction ----------

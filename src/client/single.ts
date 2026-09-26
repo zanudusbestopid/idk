@@ -8,7 +8,8 @@ import { GameScreen, loadBoardPref } from './ui/game.js';
 import { Board3D, webglAvailable } from './ui/board3d.js';
 import { renderSetup } from './ui/setup.js';
 import type { RoomView } from '../shared/protocol.js';
-import { DEFAULT_CONFIG, createGame } from '../engine/engine.js';
+import { DEFAULT_CONFIG, _forceNextRoll } from '../engine/engine.js';
+import { demoState } from './demo.js';
 import type { GameState } from '../shared/types.js';
 import { TOKEN_BY_ID } from '../shared/tokens.js';
 
@@ -32,26 +33,11 @@ function roomView(game: LocalGame): RoomView {
   };
 }
 
-/** A lived-in board for the title screen: the chosen tokens scattered around, some streets built up. */
-function demoState(setup: SoloSetup): GameState {
-  const players = [
+function demoFor(setup: SoloSetup): GameState {
+  return demoState([
     { id: HUMAN_ID, name: setup.name || 'You', token: setup.token, color: TOKEN_BY_ID[setup.token]?.color ?? '#888' },
     ...setup.bots.map((b, i) => ({ id: `bot${i + 1}`, name: b.name, token: b.token, color: TOKEN_BY_ID[b.token]?.color ?? '#888' })),
-  ];
-  const st = createGame({ ...DEFAULT_CONFIG, ...setup.config }, players, 12345);
-  const spots = [0, 6, 11, 16, 24, 29, 34, 37];
-  st.players.forEach((p, i) => { p.position = spots[(i * 3) % spots.length]; p.connected = true; });
-  const ids = st.players.map((p) => p.id);
-  const own = (idxs: number[], owner: string, houses: number) => { for (const i of idxs) st.properties[i] = { owner, houses, mortgaged: false }; };
-  own([1, 3], ids[1 % ids.length], 3);
-  own([6, 8, 9], ids[0], 2);
-  own([11, 13, 14], ids[2 % ids.length], 5);
-  own([21, 23, 24], ids[3 % ids.length], 1);
-  own([5, 15, 25], ids[0], 0);
-  own([37, 39], ids[1 % ids.length], 4);
-  own([31, 32], ids[2 % ids.length], 0);
-  st.dice = [3, 5];
-  return st;
+  ], setup.config);
 }
 
 function showSetup(): void {
@@ -71,7 +57,7 @@ function showSetup(): void {
   renderSetup(layer, {
     onStart: (setup) => { lastSetup = setup; clearSaved(); leaveTitle(() => startGame(new LocalGame(setup))); },
     onResume: (saved: SavedGame) => { lastSetup = saved.setup; leaveTitle(() => startGame(new LocalGame(saved.setup, saved.state))); },
-    onPreview: (setup) => { titleBoard?.build(demoState(setup)); },
+    onPreview: (setup) => { titleBoard?.build(demoFor(setup)); },
   }, loadSaved(), lastSetup);
 }
 
@@ -100,11 +86,12 @@ function startGame(game: LocalGame): void {
     restartLabel: 'Play again',
     leaveText: 'Quit this game? Your progress will be lost.',
     board: adopted ?? undefined,
+    onPause: (p) => game.setPaused(p),
   });
   screen.setRoom(roomView(game));
   game.onState = (state, events) => { screen?.setRoom(roomView(game)); screen?.onState(state, events); };
   screen.onState(game.state, []);
-  adopted?.setMode('follow');
+  (window as unknown as { __pt?: unknown }).__pt = { local: game, screen, forceRoll: (d1: number, d2: number) => { game.state = _forceNextRoll(game.state, d1, d2); } };
 }
 
 app.appendChild(h('div', { class: 'screen-center' }, h('div', { class: 'paper', style: { padding: '20px 28px', fontWeight: '600' } }, 'Loading…')));

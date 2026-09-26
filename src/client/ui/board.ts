@@ -3,6 +3,7 @@ import { dieFace } from '../art/dice.js';
 import { ICONS } from '../art/icons.js';
 import { h, clear, sleep } from '../dom.js';
 import { sfx } from '../audio.js';
+import { dur } from '../settings.js';
 import { tokenSvg } from './home.js';
 
 export const GROUP_COLORS: Record<string, string> = {
@@ -63,14 +64,19 @@ export interface BoardView {
   flash(index: number): void;
   highlight(index: number | null): void;
   showDice(dice: [number, number], animate: boolean): Promise<void>;
-  drawCard?(deck: 'chance' | 'chest'): void;
+  drawCard?(deck: 'chance' | 'chest', text?: string): void;
   setSpaceClick?(fn: (index: number) => void): void;
+  setCameraMode?(mode: 'follow' | 'overview' | 'top'): void;
+  setViewer?(playerId: string | null): void;
+  celebrate?(winnerId: string): void;
   destroy?(): void;
 }
 
 const SLOT_OFFSETS: [number, number][] = [[0, 0.05], [-0.3, -0.18], [0.3, -0.18], [-0.3, 0.28], [0.3, 0.28], [0, -0.32], [-0.32, 0.05], [0.32, 0.05]];
 
 export class Board implements BoardView {
+  private viewer: string | null = null;
+  setViewer(id: string | null): void { this.viewer = id; if (this.state) this.updateStatic(this.state); }
   readonly wrap: HTMLElement;
   readonly board: HTMLElement;
   readonly spaces: HTMLElement[] = [];
@@ -185,13 +191,16 @@ export class Board implements BoardView {
     }
     const cur = state.players[state.currentPlayer];
     if (cur) {
-      this.bannerWho.textContent = cur.name;
+      const mine = cur.id === this.viewer;
+      this.bannerWho.textContent = mine ? 'Your' : cur.name;
+      (this.banner.lastChild as HTMLElement).textContent = mine ? ' turn' : "'s turn";
       this.banner.style.setProperty('--who', cur.color);
     }
     if (state.phase === 'ended' && state.winner) {
       const w = byId.get(state.winner);
-      this.bannerWho.textContent = w?.name ?? '';
-      (this.banner.lastChild as HTMLElement).textContent = ' wins!';
+      const mine = state.winner === this.viewer;
+      this.bannerWho.textContent = mine ? 'You' : (w?.name ?? '');
+      (this.banner.lastChild as HTMLElement).textContent = mine ? ' win!' : ' wins!';
     }
     this.pot.classList.toggle('hidden', !state.config.freeParkingJackpot);
     this.pot.textContent = `Free Parking pot: $${state.freeParkingPot}`;
@@ -270,7 +279,7 @@ export class Board implements BoardView {
     }
     const backward = opts.backward ?? ((from - to + 40) % 40 === 3);
     const steps = backward ? (from - to + 40) % 40 : (to - from + 40) % 40;
-    const stepMs = steps > 12 ? 95 : 170;
+    const stepMs = dur(steps > 12 ? 95 : 170);
     let pos = from;
     for (let s = 0; s < steps; s++) {
       pos = backward ? (pos + 39) % 40 : (pos + 1) % 40;
@@ -309,10 +318,10 @@ export class Board implements BoardView {
     if (animate) {
       sfx.dice();
       for (const d of this.dice) { d.classList.remove('is-rolling'); void d.offsetWidth; d.classList.add('is-rolling'); }
-      await sleep(450);
+      await sleep(dur(450));
     }
     this.dice[0].innerHTML = dieFace(dice[0]);
     this.dice[1].innerHTML = dieFace(dice[1]);
-    if (animate) { await sleep(600); for (const d of this.dice) d.classList.remove('is-rolling'); }
+    if (animate) { await sleep(dur(600)); for (const d of this.dice) d.classList.remove('is-rolling'); }
   }
 }

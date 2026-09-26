@@ -6,6 +6,7 @@ import { sfx } from '../audio.js';
 import { h, clear, money, sleep } from '../dom.js';
 import { GROUP_COLORS, LIGHT_GROUPS, spaceColor } from './board.js';
 import { tokenSvg } from './home.js';
+import { getSettings, updateSettings } from '../settings.js';
 
 export type Send = (a: Action) => void;
 
@@ -191,7 +192,7 @@ export class AuctionView {
 
 // ---------- chance / chest card ----------
 
-export async function showCard(modals: Modals, deck: 'chance' | 'chest', text: string): Promise<void> {
+export async function showCard(modals: Modals, deck: 'chance' | 'chest', text: string, low = false): Promise<void> {
   sfx.card();
   const content = h('div', { class: `card-pop ${deck}` },
     h('div', { class: 'card-head' }, h('span', { html: deck === 'chance' ? ICONS.chance : ICONS.chest }), deck === 'chance' ? 'CHANCE' : 'COMMUNITY CHEST'),
@@ -200,6 +201,7 @@ export async function showCard(modals: Modals, deck: 'chance' | 'chest', text: s
   const handle = modals.show('card', content, { dismissible: true });
   handle.el.style.padding = '0';
   handle.el.style.overflow = 'hidden';
+  if (low) handle.el.parentElement?.classList.add('is-low');
   let done = false;
   const p = new Promise<void>((resolve) => {
     const finish = () => { if (done) return; done = true; handle.close(); resolve(); };
@@ -452,7 +454,7 @@ export function standingsContent(state: GameState, meId: string, isHost: boolean
   ));
   return h('div', null,
     winner ? h('span', { class: 'winner-crown', html: ICONS.crown }) : null,
-    h('h2', { style: { justifyContent: 'center' } }, winner ? `${winner.name} wins!` : 'Game over'),
+    h('h2', { style: { justifyContent: 'center' } }, winner ? (winner.id === meId ? 'You win!' : `${winner.name} wins!`) : 'Game over'),
     h('div', { class: 'standings' }, ...rows),
     h('div', { class: 'buttons' },
       h('button', { class: 'btn', type: 'button', onClick: onLeave }, 'Leave'),
@@ -468,4 +470,46 @@ export function confetti(colors: string[]): void {
   }
   document.body.appendChild(host);
   setTimeout(() => host.remove(), 6000);
+}
+
+// ---------- pause menu ----------
+
+export interface PauseHandlers {
+  onResume(): void;
+  onCamera?(mode: 'follow' | 'overview' | 'top'): void;
+  onQuit(): void;
+}
+
+export function pauseContent(state: GameState, has3d: boolean, hp: PauseHandlers): HTMLElement {
+  const st = getSettings();
+  const soundSw = h('button', { class: `switch ${st.sound ? 'is-on' : ''}`, type: 'button', role: 'switch', 'aria-checked': String(st.sound), 'aria-label': 'Sound', onClick: () => { const s2 = updateSettings({ sound: !getSettings().sound }); soundSw.classList.toggle('is-on', s2.sound); soundSw.setAttribute('aria-checked', String(s2.sound)); } });
+  const speed = h('input', { class: 'input', type: 'range', min: 0.5, max: 2, step: 0.25, value: String(st.animSpeed), id: 'pause-speed', style: { width: '9em', padding: '0' } }) as HTMLInputElement;
+  const speedVal = h('span', { class: 'money' }, `${st.animSpeed}×`);
+  speed.addEventListener('input', () => { const v = Number(speed.value); updateSettings({ animSpeed: v }); speedVal.textContent = `${v}×`; });
+  const camRow = h('div', { class: 'cam-row' });
+  const renderCam = () => {
+    clear(camRow);
+    for (const [m, label] of [['follow', 'Follow'], ['overview', 'Overview'], ['top', 'Top']] as const) {
+      camRow.appendChild(h('button', { class: `btn btn--sm ${getSettings().camera === m ? 'btn--blue' : ''}`, type: 'button', onClick: () => { updateSettings({ camera: m }); hp.onCamera?.(m); renderCam(); } }, label));
+    }
+  };
+  renderCam();
+  const c = state.config;
+  const rules = h('ul', { class: 'rules-recap' },
+    h('li', null, `Starting cash ${money(c.startingCash)} · Go salary ${money(c.goSalary)}${c.doubleGoSalary ? ' (double on landing)' : ''}`),
+    h('li', null, c.auctions ? 'Declined properties are auctioned' : 'No auctions'),
+    h('li', null, c.freeParkingJackpot ? `Free Parking jackpot on (pot ${money(state.freeParkingPot)})` : 'Free Parking does nothing'),
+    h('li', null, `Jail: fine ${money(c.jailFine)}, up to ${c.maxJailTurns} turns`),
+    h('li', null, 'Houses need the full color set and build evenly. Mortgages pay half price, lifting costs 10% more.'),
+  );
+  return h('div', { class: 'pause' },
+    h('h2', null, h('span', { class: 'ico', html: ICONS.timer }), 'Paused'),
+    h('div', { class: 'rule' }, h('div', { class: 'rlabel' }, 'Sound'), soundSw),
+    h('div', { class: 'rule' }, h('div', { class: 'rlabel' }, 'Animation speed'), h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, speed, speedVal)),
+    has3d ? h('div', { class: 'rule' }, h('div', { class: 'rlabel' }, 'Camera'), camRow) : null,
+    h('details', { class: 'rules-fold', style: { marginTop: '8px' } }, h('summary', null, 'House rules in this game'), rules),
+    h('div', { class: 'buttons' },
+      h('button', { class: 'btn', type: 'button', onClick: hp.onQuit }, 'Quit game'),
+      h('button', { class: 'btn btn--good btn--lg', type: 'button', id: 'pause-resume', onClick: hp.onResume }, 'Resume')),
+  );
 }

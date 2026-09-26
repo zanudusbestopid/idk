@@ -23,6 +23,7 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
     : { name: profile.name, token: TOKEN_LIST.some((t) => t.id === profile.token) ? profile.token : 'hat', bots: [], config: { ...DEFAULT_CONFIG } };
   let botCount = previous ? previous.bots.length : 3;
   let shuffle = 0;
+  if (!setup.difficulty) setup.difficulty = 'normal';
   const preview = () => handlers.onPreview?.({ ...setup, name: nameInput.value.trim() || 'You' });
 
   const nameInput = h('input', { class: 'input', placeholder: 'Your name', maxLength: 16, value: setup.name, autocomplete: 'off', id: 'setup-name' }) as HTMLInputElement;
@@ -31,6 +32,15 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
   const tokenGrid = h('div', { class: 'token-grid' });
   const botsEl = h('div', { class: 'bots' });
   const countRow = h('div', { class: 'count-row' });
+  const diffRow = h('div', { class: 'count-row diff-row' });
+  function renderDifficulty(): void {
+    clear(diffRow);
+    diffRow.appendChild(h('span', { class: 'muted small', style: { alignSelf: 'center', marginRight: '4px' } }, 'Skill:'));
+    for (const [d, label, title] of [['easy', 'Easy', 'Relaxed opponents that overpay and build slowly'], ['normal', 'Normal', 'Sensible opponents'], ['hard', 'Hard', 'Ruthless: plans sets, blocks yours, bids to the limit']] as const) {
+      diffRow.appendChild(h('button', { class: `btn btn--sm ${setup.difficulty === d ? 'btn--blue' : ''}`, type: 'button', title, onClick: () => { setup.difficulty = d; renderDifficulty(); } }, label));
+    }
+  }
+  renderDifficulty();
 
   function renderTokens(): void {
     clear(tokenGrid);
@@ -81,7 +91,7 @@ export function renderSetup(root: HTMLElement, handlers: SetupHandlers, saved: S
   const fields = [
     h('div', { class: 'field', style: { '--i': '0' } as unknown as Record<string, string> }, h('label', { for: 'setup-name' }, 'Your name'), nameInput),
     h('div', { class: 'field', style: { '--i': '1' } as unknown as Record<string, string> }, h('label', null, 'Your token'), tokenGrid),
-    h('div', { class: 'field', style: { '--i': '2' } as unknown as Record<string, string> }, h('label', null, 'Computer opponents'), countRow, botsEl),
+    h('div', { class: 'field', style: { '--i': '2' } as unknown as Record<string, string> }, h('label', null, 'Computer opponents'), countRow, botsEl, diffRow),
     h('div', { class: 'field', style: { '--i': '3' } as unknown as Record<string, string> }, rules),
     h('div', { class: 'field field--start', style: { '--i': '4' } as unknown as Record<string, string> }, startBtn),
   ];
