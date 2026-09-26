@@ -12,6 +12,7 @@ import { h, clear, sleep } from '../dom.js';
 import { GROUP_COLORS, LIGHT_GROUPS, sideOf, spaceColor, type BoardView } from './board.js';
 import { tokenSvg } from './home.js';
 import { faceNumbers, simulateThrow } from './dicephysics.js';
+import { cutoutFor } from './cutout.js';
 import { dur } from '../settings.js';
 
 const CORNER = 1.55;
@@ -160,11 +161,17 @@ function easeInOut(t: number): number { return t < 0.5 ? 4 * t * t * t : 1 - Mat
 
 class TokenObj {
   group = new THREE.Group();
+  /** The cutout mesh (a plane until the extruded geometry is ready). */
   sprite: THREE.Mesh;
   shadow: THREE.Mesh;
   facing = 1;
   baseY = BOARD_Y + 0.47;
-  constructor(private material: THREE.MeshBasicMaterial) {
+  phase = Math.random() * 10;
+  walkStep = 0;
+  squash = 0; // 0..1 landing squash amount, decays
+  private faceMat: THREE.MeshBasicMaterial;
+  constructor(material: THREE.MeshBasicMaterial) {
+    this.faceMat = material;
     this.sprite = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 0.92), material);
     this.sprite.position.y = 0.47;
     this.shadow = new THREE.Mesh(new THREE.CircleGeometry(0.32, 24), new THREE.MeshBasicMaterial({ color: 0x2b2118, transparent: true, opacity: 0.3, depthWrite: false }));
@@ -173,7 +180,39 @@ class TokenObj {
     this.shadow.scale.set(1.25, 0.7, 1);
     this.group.add(this.sprite, this.shadow);
   }
-  setBankrupt(b: boolean): void { this.material.opacity = b ? 0.35 : 1; this.material.transparent = true; this.material.color.setScalar(b ? 0.55 : 1); }
+  /** Swap the flat plane for the extruded paper cutout. */
+  useCutout(geometry: THREE.ExtrudeGeometry, texture: THREE.CanvasTexture): void {
+    const old = this.sprite;
+    this.faceMat.map = texture;
+    this.faceMat.transparent = true;
+    this.faceMat.alphaTest = 0.05;
+    this.faceMat.side = THREE.DoubleSide;
+    this.faceMat.needsUpdate = true;
+    const edge = new THREE.MeshLambertMaterial({ color: INK });
+    const mesh = new THREE.Mesh(geometry, [this.faceMat, edge]);
+    mesh.scale.set(0.92, 0.92, 1);
+    mesh.position.y = 0; // geometry stands on y=0
+    mesh.castShadow = true;
+    mesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: texture, alphaTest: 0.5 });
+    this.group.remove(old);
+    old.geometry.dispose();
+    this.sprite = mesh;
+    this.baseY = 0;
+    this.group.add(mesh);
+    this.applyPose(0, 0);
+  }
+  /** Procedural paper animation: breathing, waddle while walking, squash on landing. */
+  applyPose(hop: number, tilt: number, now = performance.now()): void {
+    const m = this.sprite;
+    const breathe = 1 + Math.sin(now / 520 + this.phase) * 0.018;
+    const sq = this.squash;
+    const sy = breathe * (1 - sq * 0.22);
+    const sx = (1 + sq * 0.18) * this.facing;
+    m.scale.set(0.92 * sx, 0.92 * sy, 1);
+    m.position.y = (this.sprite.geometry instanceof THREE.PlaneGeometry ? 0.47 : 0) + hop;
+    m.rotation.z = tilt + Math.sin(now / 900 + this.phase) * 0.015;
+  }
+  setBankrupt(b: boolean): void { this.faceMat.opacity = b ? 0.35 : 1; this.faceMat.transparent = true; this.faceMat.color.setScalar(b ? 0.55 : 1); }
 }
 
 export class Board3D implements BoardView {
@@ -189,6 +228,7 @@ export class Board3D implements BoardView {
   private boardCanvas: HTMLCanvasElement;
   private icons = new Map<string, HTMLImageElement>();
   private tokens = new Map<string, TokenObj>();
+  private busyTokens = new Set<TokenObj>();
   private tokenPos = new Map<string, number>();
   private dynamic = new THREE.Group(); // owner marks, houses, mortgages
   private hover: THREE.Mesh;
@@ -485,7 +525,7 @@ export class Board3D implements BoardView {
       this.scene.add(tok.group);
       this.tokens.set(p.id, tok);
       this.tokenPos.set(p.id, p.position);
-      void svgTexture(tokenSvg(p.token), 512).then((tex) => { mat.map = tex; mat.visible = true; mat.needsUpdate = true; });
+      void cutoutFor(tokenSvg(p.token)).then(({ geometry, texture }) => { if (this.tokens.get(p.id) === tok) { tok.useCutout(geometry, texture); mat.visible = true; } }).catch(() => { void svgTexture(tokenSvg(p.token), 512).then((tex) => { mat.map = tex; mat.visible = true; mat.needsUpdate = true; }); });
     }
     this.resize();
     if (!this.cameraPlaced) {
@@ -796,23 +836,27 @@ export class Board3D implements BoardView {
   }
 
   private tweenTo(tok: TokenObj, target: THREE.Vector3, ms: number, hop: boolean): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolveOuter) => {
+      const resolve = () => { this.busyTokens.delete(tok); resolveOuter(); };
+      this.busyTokens.add(tok);
       const from = tok.group.position.clone();
+      if (hop) tok.walkStep++;
+      const side = tok.walkStep % 2 === 0 ? 1 : -1;
       this.tweens.push(timed(ms, (t) => {
         const k = easeInOut(t);
         tok.group.position.lerpVectors(from, target, k);
-        tok.sprite.position.y = 0.47 + (hop ? Math.sin(t * Math.PI) * 0.42 : 0);
-        tok.sprite.rotation.z = hop ? Math.sin(t * Math.PI) * -0.12 * tok.facing : 0;
+        const lift = hop ? Math.sin(t * Math.PI) * 0.42 : 0;
+        tok.applyPose(lift, hop ? Math.sin(t * Math.PI) * 0.14 * side : 0);
         const sh = tok.shadow.scale; const shrink = hop ? 1 - Math.sin(t * Math.PI) * 0.35 : 1; sh.set(1.25 * shrink, 0.7 * shrink, 1);
-      }, resolve));
+      }, () => { if (hop) tok.squash = 1; resolve(); }));
     });
   }
 
   private setFacing(tok: TokenObj, facing: number): void {
     if (tok.facing === facing) return;
     tok.facing = facing;
-    const from = tok.sprite.scale.x;
-    this.tweens.push(timed(160, (t) => { tok.sprite.scale.x = from + (facing - from) * t; }));
+    const from = -facing;
+    this.tweens.push(timed(160, (t) => { const f = from + (facing - from) * t; tok.sprite.scale.x = 0.92 * f; }));
   }
 
   private facingFor(dx: number, dz: number, tok: TokenObj): number {
@@ -834,11 +878,12 @@ export class Board3D implements BoardView {
       this.setFacing(tok, this.facingFor(d.x, d.z, tok));
       // one big leap
       const startPos = tok.group.position.clone();
+      this.busyTokens.add(tok);
       await new Promise<void>((resolve) => this.tweens.push(timed(dur(650), (t) => {
         const k = easeInOut(t);
         tok.group.position.lerpVectors(startPos, target, k);
-        tok.sprite.position.y = 0.47 + Math.sin(t * Math.PI) * 1.6;
-      }, resolve)));
+        tok.applyPose(Math.sin(t * Math.PI) * 1.6, Math.sin(t * Math.PI * 2) * 0.2);
+      }, () => { tok.squash = 1; this.busyTokens.delete(tok); resolve(); })));
       this.flash(to);
       this.updateRing();
       return;
@@ -1080,6 +1125,9 @@ export class Board3D implements BoardView {
     for (const tok of this.tokens.values()) {
       const p = tok.group.position;
       tok.group.rotation.y = Math.atan2(this.camera.position.x - p.x, this.camera.position.z - p.z);
+      if (tok.squash > 0) tok.squash = Math.max(0, tok.squash - dt / 260);
+      // idle pose only when no tween is driving this token (tweens call applyPose themselves)
+      if (!this.busyTokens.has(tok)) tok.applyPose(0, 0, now);
     }
     const pulse = 1 + Math.sin(now / 350) * 0.08;
     this.ring.scale.set(pulse, pulse, 1);
