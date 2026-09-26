@@ -4,7 +4,7 @@ import type { Action, GameEvent, GameState } from '../../shared/types.js';
 import { dieFace } from '../art/dice.js';
 import { ICONS } from '../art/icons.js';
 import { isMuted, setMuted, sfx } from '../audio.js';
-import { h, clear, money, sleep, toast } from '../dom.js';
+import { append, h, clear, money, sleep, toast } from '../dom.js';
 import { Board, spaceColor } from './board.js';
 import {
   AuctionView, DebtView, ManageView, Modals, TradeComposer, buyContent, confetti, deedViewerContent, incomingTradeContent,
@@ -42,13 +42,16 @@ export class GameScreen {
   private trade: TradeComposer | null = null;
   private lastCash = new Map<string, number>();
   private seenTrades = new Set<string>();
+  private incomingShown: string | null = null;
   private gameOverShown = false;
   private lastLogCount = 0;
 
   constructor(root: HTMLElement, meId: string, handlers: GameHandlers) {
     this.root = root;
     this.meId = meId;
-    this.handlers = handlers;
+    // Lock every action button after a click until the server answers, so a double
+    // click cannot send the same action twice.
+    this.handlers = { ...handlers, send: (a) => { this.lockButtons(); handlers.send(a); } };
     clear(root);
     this.board = new Board((i) => this.openDeed(i));
     const chatForm = h('form', { class: 'chatform', onSubmit: (e: Event) => { e.preventDefault(); const t = this.chatInput.value.trim(); if (t) { handlers.chat(t); this.chatInput.value = ''; } } },
@@ -65,6 +68,17 @@ export class GameScreen {
       h('div', { class: 'game__actions' }, this.actionsEl),
       h('div', { class: 'game__log' }, logbox)));
     this.timerHandle = window.setInterval(() => this.tickTimer(), 500);
+  }
+
+  private lockButtons(): void {
+    document.querySelectorAll<HTMLButtonElement>('.dialog button, .actions button').forEach((b) => { b.disabled = true; });
+  }
+
+  /** The server rejected something: re-enable the UI from the current state. */
+  onError(): void {
+    if (!this.state || this.processing) return;
+    this.renderActions();
+    this.syncDialogs(true);
   }
 
   destroy(): void {
@@ -131,7 +145,7 @@ export class GameScreen {
         await this.board.showDice(ev.dice, true);
         return;
       case 'moved':
-        await this.board.moveToken(ev.player, ev.from, ev.to, { direct: ev.direct, backward: (ev as { backward?: boolean }).backward }, state);
+        await this.board.moveToken(ev.player, ev.from, ev.to, { direct: ev.direct, backward: (ev as { backwards?: boolean }).backwards }, state);
         await sleep(120);
         return;
       case 'paid':
@@ -217,6 +231,7 @@ export class GameScreen {
   private renderActions(): void {
     const state = this.state!;
     clear(this.actionsEl);
+    const add = (...c: (Node | string | null | undefined)[]) => append(this.actionsEl, c);
     const me = state.players.find((p) => p.id === this.meId);
     const busy = this.processing;
     const legal = me && !busy ? new Set(legalActions(state, this.meId)) : new Set<string>();
@@ -225,15 +240,15 @@ export class GameScreen {
     const diceMini = state.dice ? h('span', { class: 'dice-mini', html: dieFace(state.dice[0]) + dieFace(state.dice[1]) }) : null;
 
     if (state.phase === 'ended') {
-      this.actionsEl.append(h('span', { class: 'hint' }, 'Game over.'), h('span', { class: 'spacer' }), h('button', { class: 'btn', type: 'button', onClick: () => this.syncDialogs(true) }, 'Show standings'));
+      add(h('span', { class: 'hint' }, 'Game over.'), h('span', { class: 'spacer' }), h('button', { class: 'btn', type: 'button', onClick: () => this.syncDialogs(true) }, 'Show standings'));
       return;
     }
     if (!me || me.bankrupt) {
-      this.actionsEl.append(h('span', { class: 'hint' }, 'You are out of the game. Enjoy the show!'));
+      add(h('span', { class: 'hint' }, 'You are out of the game. Enjoy the show!'));
       return;
     }
     if (busy) {
-      this.actionsEl.append(diceMini, h('span', { class: 'hint' }, '…'), h('span', { class: 'spacer' }), this.timerEl);
+      add(diceMini, h('span', { class: 'hint' }, '…'), h('span', { class: 'spacer' }), this.timerEl);
       return;
     }
     const isMyTurn = cur?.id === this.meId;
@@ -241,35 +256,35 @@ export class GameScreen {
     if (state.phase === 'roll' && isMyTurn) {
       if (me.inJail) {
         hint = h('span', { class: 'hint' }, `You are in jail (turn ${me.jailTurns + 1} of ${state.config.maxJailTurns}). Roll doubles to get out, or pay.`);
-        this.actionsEl.append(hint,
+        add(hint,
           btn('Roll for doubles', { type: 'roll' }, 'btn btn--primary btn--lg', legal.has('roll')),
           btn(`Pay ${money(state.config.jailFine)}`, { type: 'payJailFine' }, 'btn btn--warn', legal.has('payJailFine')),
           me.jailCards > 0 ? btn('Use jail card', { type: 'useJailCard' }, 'btn btn--blue', legal.has('useJailCard')) : null);
       } else {
         hint = h('span', { class: 'hint' }, state.canRollAgain ? 'Doubles! Roll again.' : 'Your turn.');
-        this.actionsEl.append(hint, btn('Roll dice', { type: 'roll' }, 'btn btn--primary btn--lg', legal.has('roll')));
+        add(hint, btn('Roll dice', { type: 'roll' }, 'btn btn--primary btn--lg', legal.has('roll')));
       }
     } else if (state.phase === 'action' && isMyTurn) {
       hint = h('span', { class: 'hint' }, 'Build, trade, or end your turn.');
-      this.actionsEl.append(diceMini, hint, btn('End turn', { type: 'endTurn' }, 'btn btn--primary btn--lg', legal.has('endTurn')));
+      add(diceMini, hint, btn('End turn', { type: 'endTurn' }, 'btn btn--primary btn--lg', legal.has('endTurn')));
     } else if (state.phase === 'buy' && isMyTurn) {
       hint = h('span', { class: 'hint' }, `Buy ${state.board[state.pendingSpace ?? 0]?.name}?`);
-      this.actionsEl.append(diceMini, hint, h('button', { class: 'btn btn--good', type: 'button', onClick: () => this.syncDialogs(true) }, 'Show offer'));
+      add(diceMini, hint, h('button', { class: 'btn btn--good', type: 'button', onClick: () => this.syncDialogs(true) }, 'Show offer'));
     } else if (state.phase === 'auction') {
       hint = h('span', { class: 'hint' }, `Auction for ${state.board[state.auction?.space ?? 0]?.name}`);
-      this.actionsEl.append(hint, h('button', { class: 'btn btn--good', type: 'button', onClick: () => this.syncDialogs(true) }, 'Show auction'));
+      add(hint, h('button', { class: 'btn btn--good', type: 'button', onClick: () => this.syncDialogs(true) }, 'Show auction'));
     } else if (state.phase === 'debt') {
       const d = state.debt!;
       hint = h('span', { class: 'hint' }, d.debtor === this.meId ? `You owe ${money(d.amount)}.` : `${playerName(state, d.debtor)} is raising ${money(d.amount)}…`);
-      this.actionsEl.append(hint, d.debtor === this.meId ? h('button', { class: 'btn btn--primary', type: 'button', onClick: () => this.syncDialogs(true) }, 'Raise money') : null);
+      add(hint, d.debtor === this.meId ? h('button', { class: 'btn btn--primary', type: 'button', onClick: () => this.syncDialogs(true) }, 'Raise money') : null);
     } else {
       hint = h('span', { class: 'hint' }, diceMini ? '' : '', `Waiting for `, nameTag(state, cur?.id ?? null), '…');
-      this.actionsEl.append(diceMini, hint);
+      add(diceMini, hint);
     }
-    this.actionsEl.append(h('span', { class: 'spacer' }));
+    add(h('span', { class: 'spacer' }));
     const canManage = legal.has('build') || legal.has('sellHouse') || legal.has('mortgage') || legal.has('unmortgage');
     const openTrades = state.trades.filter((t) => t.to === this.meId || t.from === this.meId).length;
-    this.actionsEl.append(
+    add(
       h('button', { class: 'btn', type: 'button', disabled: state.phase === 'debt' && state.debt?.debtor !== this.meId, onClick: () => this.openManage() }, h('span', { class: 'ico', html: ICONS.hammer }), canManage ? 'Manage' : 'Properties'),
       h('button', { class: 'btn', type: 'button', disabled: !legal.has('proposeTrade') && openTrades === 0, onClick: () => this.openTrades() }, h('span', { class: 'ico', html: ICONS.trade }), openTrades ? `Trades (${openTrades})` : 'Trade'),
       this.timerEl,
@@ -322,15 +337,13 @@ export class GameScreen {
 
     // Incoming trade offers for me
     const incoming = state.trades.filter((t) => t.to === this.meId);
+    if (this.incomingShown && !incoming.some((t) => t.id === this.incomingShown)) { this.modals.close('incoming'); this.incomingShown = null; }
     const fresh = incoming.find((t) => !this.seenTrades.has(t.id));
-    if (fresh && !this.modals.has('incoming') && !wantBuy && !wantDebt && !wantAuction) {
+    if (fresh && !this.incomingShown && !wantBuy && !wantDebt && !wantAuction) {
       this.seenTrades.add(fresh.id);
+      this.incomingShown = fresh.id;
       sfx.notify();
-      this.modals.show('incoming', incomingTradeContent(state, fresh, this.handlers.send, this.meId), { dismissible: true });
-    }
-    if (this.modals.has('incoming')) {
-      const stillOpen = incoming.some((t) => this.modals.get('incoming')?.el.textContent?.includes(playerName(state, t.from)));
-      if (!stillOpen || incoming.length === 0) this.modals.close('incoming');
+      this.modals.show('incoming', incomingTradeContent(state, fresh, this.handlers.send, this.meId), { dismissible: true, onClose: () => { this.incomingShown = null; } });
     }
     for (const t of state.trades) this.seenTrades.add(t.id);
 

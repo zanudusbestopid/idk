@@ -1,8 +1,11 @@
 /**
  * Paper Tycoon rules engine: pure, deterministic state transitions.
  *
- * - `applyAction` never mutates its input; it deep-copies, mutates the copy and
- *   returns it together with the events produced.
+ * - `applyAction` never mutates its input; it copies the state, mutates the copy
+ *   and returns it together with the events produced. Two parts of the state
+ *   are immutable and therefore shared between the input and the output rather
+ *   than copied: `board` (frozen by `createGame`) and the event objects already
+ *   in `log` (frozen when emitted). Everything else is deep-copied.
  * - No Date.now / Math.random: all randomness comes from `state.rng`.
  * - Errors are returned as `{ ok: false, error }`, never thrown (except by
  *   `createGame` on invalid input, which is a programming error).
@@ -103,7 +106,7 @@ export function createGame(config: Partial<GameConfig>, players: NewPlayer[], se
 
   const state: GameState = {
     config: cfg,
-    board: BOARD.map((s) => ({ ...s, ...(s.rent ? { rent: s.rent.slice() } : {}) })),
+    board: deepFreeze(BOARD.map((s) => ({ ...s, ...(s.rent ? { rent: s.rent.slice() } : {}) }))),
     players: players.map((p) => ({
       id: p.id,
       name: p.name,
@@ -215,9 +218,30 @@ interface Ctx {
 }
 
 function emit(ctx: Ctx, event: GameEvent): void {
+  deepFreeze(event);
   ctx.events.push(event);
   ctx.state.log.push(event);
   if (ctx.state.log.length > LOG_CAP) ctx.state.log.splice(0, ctx.state.log.length - LOG_CAP);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value as object)) deepFreeze(v);
+  }
+  return value;
+}
+
+/**
+ * Copy a state for mutation. `board` and the events already in `log` are
+ * immutable (frozen) and shared; everything else is deep-copied.
+ */
+export function cloneState(state: GameState): GameState {
+  const { board, log, ...rest } = state;
+  const copy = structuredClone(rest) as GameState;
+  copy.board = board;
+  copy.log = log.slice();
+  return copy;
 }
 
 function fail(error: string): ActionResult {
@@ -234,7 +258,7 @@ export function applyAction(state: GameState, playerId: string, action: Action):
     return fail(`'${action.type}' is not allowed for ${player.name} right now`);
   }
 
-  const s = structuredClone(state);
+  const s = cloneState(state);
   const ctx: Ctx = { state: s, events: [] };
   const p = getPlayer(s, playerId)!;
   const error = dispatch(ctx, p, action);

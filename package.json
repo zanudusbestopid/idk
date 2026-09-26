@@ -3,15 +3,26 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Online Monopoly-style board game: pure rules engine, server and client",
+  "description": "Paper Tycoon – an online property-trading board game in a paper-craft style",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs && node dist/paper-tycoon.js",
+    "e2e": "node scripts/e2e.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.28.2",
+    "playwright": "^1.63.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
+  },
+  "dependencies": {
+    "ws": "^8.21.3"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

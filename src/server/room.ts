@@ -15,7 +15,7 @@ import {
 import { TOKEN_BY_ID, TOKEN_LIST, isTokenId } from '../shared/tokens.js';
 import { chooseAutoAction, playersToAct } from './autoplay.js';
 
-const DISCONNECT_GRACE_MS = 45_000; // auto-play for a disconnected player after this long
+const DISCONNECT_GRACE_MS = Number(process.env.PT_GRACE_MS) || 45_000; // auto-play for a disconnected player after this long
 const LOBBY_FORGET_MS = 120_000; // drop a disconnected lobby member after this long
 const CHAT_HISTORY = 100;
 
@@ -204,6 +204,7 @@ export class Room {
 
   disconnect(m: Member, socket: WebSocket): void {
     if (m.socket !== socket) return; // stale socket
+    if (!this.members.has(m.id)) return; // room already torn down
     m.socket = null;
     m.connected = false;
     m.disconnectedAt = Date.now();
@@ -235,7 +236,7 @@ export class Room {
   }
 
   private pickNewHost(): void {
-    const next = this.order.map((id) => this.members.get(id)!).find((m) => m.connected && m.id !== this.hostId);
+    const next = this.order.map((id) => this.members.get(id)).find((m) => m && m.connected && m.id !== this.hostId);
     if (next) {
       this.hostId = next.id;
       this.system(`${next.name} is now the host`);
@@ -450,8 +451,11 @@ export class Room {
     const targets = reason === 'grace' ? actors.filter((id) => !(this.members.get(id)?.connected)) : actors;
     let acted = false;
     for (const id of targets) {
-      // Take up to a handful of steps for this player (e.g. mortgage, mortgage, payDebt).
-      for (let i = 0; i < 12; i++) {
+      const away = !(this.members.get(id)?.connected);
+      // A present-but-slow player loses one decision per timeout. An absent player is
+      // played through until they no longer block the game (bounded to avoid loops).
+      const maxSteps = away ? 30 : 12;
+      for (let i = 0; i < maxSteps; i++) {
         const a = chooseAutoAction(this.state, id);
         if (!a) break;
         const r = applyAction(this.state, id, a);
@@ -460,7 +464,9 @@ export class Room {
         acted = true;
         this.broadcastState(r.events);
         if (this.state.phase === 'ended') break;
-        if (a.type !== 'sellHouse' && a.type !== 'mortgage') break; // one decisive action per timeout
+        const stillBlocking = playersToAct(this.state).includes(id);
+        if (!stillBlocking) break;
+        if (!away && a.type !== 'sellHouse' && a.type !== 'mortgage') break; // one decisive action per timeout
       }
       if (this.state.phase === 'ended') break;
     }
@@ -477,10 +483,14 @@ export class Room {
 
   destroy(): void {
     this.clearTimer();
-    for (const m of this.members.values()) {
-      if (m.forgetTimer) clearTimeout(m.forgetTimer);
-      if (m.socket) { try { m.socket.close(); } catch { /* ignore */ } }
-    }
+    const members = [...this.members.values()];
     this.members.clear();
+    this.order.length = 0;
+    for (const m of members) {
+      if (m.forgetTimer) clearTimeout(m.forgetTimer);
+      const sock = m.socket;
+      m.socket = null;
+      if (sock) { try { sock.close(); } catch { /* ignore */ } }
+    }
   }
 }

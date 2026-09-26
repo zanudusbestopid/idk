@@ -107,7 +107,7 @@ export class Board {
     }
     // Center
     const chance = h('div', { class: 'deck deck--chance' }, h('span', { html: ICONS.chance }), 'CHANCE');
-    const chest = h('div', { class: 'deck deck--chest' }, h('span', { html: ICONS.chest }), 'COMMUNITY', 'CHEST');
+    const chest = h('div', { class: 'deck deck--chest' }, h('span', { html: ICONS.chest }), h('span', null, 'COMMUNITY'), h('span', null, 'CHEST'));
     this.dice = [h('div', { class: 'die', html: dieFace(1) }), h('div', { class: 'die', html: dieFace(1) })];
     const center = h('div', { class: 'center' },
       h('div', { class: 'logo title-art' }, 'PAPER', h('span', { class: 'small' }, 'TYCOON')),
@@ -186,12 +186,13 @@ export class Board {
 
   private coordsFor(index: number, slot: number): { left: number; top: number } {
     const el = this.spaces[index];
-    const b = this.board.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
     const em = parseFloat(this.board.style.fontSize) || 6;
     const [ox, oy] = SLOT_OFFSETS[slot % SLOT_OFFSETS.length];
-    const cx = r.left - b.left + r.width / 2 + ox * Math.min(r.width, 9 * em);
-    const cy = r.top - b.top + r.height / 2 + oy * Math.min(r.height, 9 * em);
+    // offsetLeft/Top are layout coordinates relative to .board (its offsetParent), so the
+    // board's decorative rotation does not skew them the way getBoundingClientRect would.
+    const w = el.offsetWidth, hgt = el.offsetHeight;
+    const cx = el.offsetLeft + w / 2 + ox * Math.min(w, 9 * em);
+    const cy = el.offsetTop + hgt / 2 + oy * Math.min(hgt, 9 * em);
     // Nudge tokens toward the outer half of the space so the color band stays visible.
     const side = sideOf(index);
     const nudge = index % 10 === 0 ? 0 : 0.6 * em;

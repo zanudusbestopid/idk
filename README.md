@@ -5,7 +5,8 @@ One person runs the server, everyone else joins from a browser. No accounts, no 
 
 ## Run it (the host)
 
-You need [Node.js](https://nodejs.org) 18 or newer.
+You need [Node.js](https://nodejs.org) 18 or newer. The whole game is one file:
+`release/paper-tycoon.js` (server and client bundled together). Download it, then:
 
 ```
 node paper-tycoon.js
@@ -37,6 +38,8 @@ npm install
 npm test          # rules engine tests
 npm run typecheck
 npm run build     # produces dist/paper-tycoon.js (single file, client embedded)
+npm run e2e       # three headless browsers play 120 turns against the built server
+node scripts/server-test.mjs   # raw WebSocket checks: rejoin, auto-play, kick, restart
 npm start         # build and run
 ```
 

@@ -22,15 +22,16 @@ const names = ['Ava', 'Ben', 'Cleo'];
 const pages = [];
 for (const name of names) {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  await ctx.route(/^(?!http:\/\/localhost)/, (r) => r.abort());
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(`${name}: pageerror ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`${name}: console ${m.text()}`); });
+  page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('ERR_FAILED')) errors.push(`${name}: console ${m.text()}`); });
   pages.push(page);
 }
 const [p1, p2, p3] = pages;
 const base = `http://localhost:${PORT}`;
 
-await p1.goto(base);
+await p1.goto(base, { waitUntil: 'domcontentloaded' });
 await p1.fill('input[placeholder="Your name"]', 'Ava');
 await p1.click('.token-pick[title="Sailboat"]');
 await p1.click('text=Create a room');
@@ -39,7 +40,7 @@ const code = (await p1.textContent('.lobby .code')).trim();
 console.log('room code', code);
 
 for (const [page, name] of [[p2, 'Ben'], [p3, 'Cleo']]) {
-  await page.goto(`${base}/${code}`);
+  await page.goto(`${base}/${code}`, { waitUntil: 'domcontentloaded' });
   await page.fill('input[placeholder="Your name"]', name);
   await page.fill('.input--code', code);
   await page.click('button:has-text("Join")');
@@ -143,7 +144,7 @@ for (let i = 0; i < TURN_LIMIT * 12 && !over; i++) {
     if (r) { did = true; }
   }
   const turn = await p1.evaluate(() => { const m = document.querySelector('.log')?.textContent?.match(/Turn (\d+)/g); return m ? Number(m[m.length - 1].slice(5)) : 0; }).catch(() => 0);
-  if (turn > lastTurn) { lastTurn = turn; stall = 0; if (turn >= TURN_LIMIT) break; if (SHOTS && turn % 15 === 0) await p1.screenshot({ path: `shots/turn-${String(turn).padStart(3, '0')}.png` }); }
+  if (turn > lastTurn) { lastTurn = turn; stall = 0; if (turn % 5 === 0) console.log(`turn ${turn} (${((Date.now() - start) / 1000).toFixed(0)}s)`); if (turn >= TURN_LIMIT) break; if (SHOTS && turn % 15 === 0) await p1.screenshot({ path: `shots/turn-${String(turn).padStart(3, '0')}.png` }); }
   else if (!did) stall++;
   if (stall > 40) { errors.push(`stalled at turn ${turn}`); break; }
   if (errors.length > 20) break;

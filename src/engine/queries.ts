@@ -321,9 +321,13 @@ export function canAcceptTrade(state: GameState, playerId: string, trade: Trade)
   return err ? no(err) : OK;
 }
 
-/** May this player reject (recipient) or cancel (proposer) the given open trade right now? */
+/**
+ * May this player reject (recipient) or cancel (proposer) the given open trade
+ * right now? Allowed in every phase but 'auction' and 'ended'.
+ */
 export function canRejectTrade(state: GameState, playerId: string, trade: Trade): Check {
   if (trade.to !== playerId && trade.from !== playerId) return no('Not your trade');
+  if (state.phase === 'auction') return no('Not during an auction');
   if (state.phase === 'ended') return no('The game is over');
   return OK;
 }

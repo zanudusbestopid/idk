@@ -435,11 +435,11 @@ export function deedViewerContent(state: GameState, index: number, meId: string,
 export function standingsContent(state: GameState, meId: string, isHost: boolean, onLeave: () => void, onRestart: () => void): HTMLElement {
   const ranked = [...state.players].map((p) => ({ p, worth: p.bankrupt ? -1 : netWorth(state, p.id) })).sort((a, b) => b.worth - a.worth);
   const winner = state.players.find((p) => p.id === state.winner);
-  const rows = ranked.map(({ p, worth }, i) => h('div', { class: `srow paper paper--flat ${p.id === state.winner ? 'is-winner' : ''}` },
+  const rows = ranked.map(({ p, worth }) => h('div', { class: `srow paper paper--flat ${p.id === state.winner ? 'is-winner' : ''}` },
     h('span', { html: tokenSvg(p.token) }),
     h('span', null, h('b', { style: { color: p.color } }, p.name), p.id === meId ? h('span', { class: 'tag tag--you', style: { marginLeft: '6px' } }, 'you') : null, p.bankrupt ? h('span', { class: 'tag', style: { marginLeft: '6px' } }, 'bankrupt') : null),
     h('span', { class: 'money' }, p.bankrupt ? '—' : money(worth)),
-  ).cloneNode(true) as HTMLElement).map((el, i) => { el.firstElementChild!.insertAdjacentText('beforebegin', ''); return el; });
+  ));
   return h('div', null,
     winner ? h('span', { class: 'winner-crown', html: ICONS.crown }) : null,
     h('h2', { style: { justifyContent: 'center' } }, winner ? `${winner.name} wins!` : 'Game over'),

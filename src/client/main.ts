@@ -100,6 +100,7 @@ net.on((msg: ServerMessage) => {
     case 'chatHistory': store.set({ chat: msg.messages }); return;
     case 'error':
       toast(msg.message, 'error');
+      game?.onError();
       if (msg.fatal) { saveSession(null, null); net.session = null; history.replaceState(null, '', '/'); showHome(); }
       return;
     case 'left': return;

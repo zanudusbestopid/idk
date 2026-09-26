@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { ClientMessage, ServerMessage } from '../shared/protocol.js';
 import { getAssets } from './assets.js';
 import { Room, RoomError, type Member } from './room.js';
+import { isTokenId } from '../shared/tokens.js';
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -53,6 +54,7 @@ const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 });
 // ---------- WebSocket ----------
 
 interface Conn { socket: WebSocket; room: Room | null; member: Member | null; alive: boolean }
+const conns = new Map<WebSocket, Conn>();
 
 function reply(socket: WebSocket, msg: ServerMessage): void {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(msg));
@@ -75,11 +77,9 @@ function handle(conn: Conn, msg: ClientMessage): void {
     case 'create': {
       if (conn.member) throw new RoomError('Already in a room');
       const code = newCode();
-      const host = Room.createMember(msg.name, 'hat', socket);
+      const host = Room.createMember(msg.name, isTokenId(msg.token) ? msg.token : 'hat', socket);
       const room = new Room(code, host);
       rooms.set(code, room);
-      // Respect the requested token if valid; freeToken logic lives in join, so set directly here.
-      host.token = typeof msg.token === 'string' && msg.token ? msg.token : 'hat';
       room.addHost(host);
       sessions.set(host.session, { room, playerId: host.id });
       conn.room = room;
@@ -139,6 +139,7 @@ function handle(conn: Conn, msg: ClientMessage): void {
 
 wss.on('connection', (socket) => {
   const conn: Conn = { socket, room: null, member: null, alive: true };
+  conns.set(socket, conn);
   socket.on('pong', () => { conn.alive = true; });
   socket.on('message', (data) => {
     const msg = parse(data);
@@ -151,6 +152,7 @@ wss.on('connection', (socket) => {
     }
   });
   socket.on('close', () => {
+    conns.delete(socket);
     if (conn.room && conn.member) conn.room.disconnect(conn.member, socket);
   });
   socket.on('error', () => { /* close follows */ });
@@ -158,12 +160,10 @@ wss.on('connection', (socket) => {
 
 // Heartbeat: drop dead sockets so disconnects are noticed behind NATs/tunnels.
 const heartbeat = setInterval(() => {
-  for (const client of wss.clients) {
-    const anyClient = client as WebSocket & { __alive?: boolean };
-    if (anyClient.__alive === false) { client.terminate(); continue; }
-    anyClient.__alive = false;
-    client.ping();
-    client.once('pong', () => { anyClient.__alive = true; });
+  for (const [socket, conn] of conns) {
+    if (!conn.alive) { socket.terminate(); continue; }
+    conn.alive = false;
+    socket.ping();
   }
 }, 30_000);
 
