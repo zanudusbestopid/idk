@@ -160,14 +160,6 @@ function timed(ms: number, step: (t: number, dt: number) => void, done?: () => v
   return { update: (now, dt) => { const t = Math.min(1, (now - start) / ms); step(t, dt); if (t >= 1) { done?.(); return false; } return true; } };
 }
 
-/** Shortest-path angular approach, with a time constant in ms. */
-function approachAngle(current: number, target: number, dt: number, tau: number): number {
-  let d = target - current;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return current + d * (1 - Math.exp(-dt / tau));
-}
-
 /** Simple cubic ease-in-out. */
 function easeInOut(t: number): number { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
 
@@ -176,9 +168,9 @@ class TokenObj {
   /** The standee mesh (a plane until the character's frames are ready). */
   sprite: THREE.Mesh;
   shadow: THREE.Mesh;
-  facing = 1;
+  facing = 1;     // 1: front side toward the camera (art looks right); -1: flipped over, showing the mirrored back
   yaw = 0;        // current world heading of the cutout's face (radians about Y)
-  targetYaw = 0;  // where it is turning toward
+  flip: { from: number; to: number; start: number; ms: number } | null = null; // paper flip in progress
   baseY = BOARD_Y + 0.47;
   phase = Math.random() * 10;
   walkStep = 0;
@@ -249,7 +241,7 @@ class TokenObj {
     const breathe = isSprite ? 1 : 1 + Math.sin(now / 520 + this.phase) * 0.018;
     const sq = this.squash;
     const sy = breathe * (1 - sq * 0.22);
-    const sx = (1 + sq * 0.18) * this.facing;
+    const sx = 1 + sq * 0.18;
     // The pixel cutout geometry is already w/h wide for a height of 1, so it scales uniformly (square pixels).
     const hgt = isSprite ? TOKEN * SPRITE_SCALE * this.contentScale : TOKEN;
     const w = isSprite ? hgt : TOKEN;
@@ -258,9 +250,29 @@ class TokenObj {
     m.rotation.z = tilt + (isSprite ? 0 : Math.sin(now / 900 + this.phase) * 0.015);
   }
   setBankrupt(b: boolean): void { this.faceMat.opacity = b ? 0.35 : 1; this.faceMat.transparent = true; this.faceMat.color.setScalar(b ? 0.55 : 1); }
+  /**
+   * Turn toward a heading. Small differences ease smoothly (a billboard tracking the camera);
+   * large ones flip the cutout over on its vertical axis, paper-style, showing the edge mid-turn.
+   */
+  turnToward(target: number, now: number, dt: number): void {
+    if (this.flip) {
+      const t = Math.min(1, (now - this.flip.start) / this.flip.ms);
+      this.yaw = this.flip.from + (this.flip.to - this.flip.from) * easeInOut(t);
+      if (t >= 1) this.flip = null;
+    } else {
+      let d = target - this.yaw;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      if (Math.abs(d) > FLIP_AT) this.flip = { from: this.yaw, to: this.yaw + d, start: now, ms: dur(340) };
+      else this.yaw += d * (1 - Math.exp(-dt / 220));
+    }
+    this.group.rotation.y = this.yaw;
+  }
+  snapYaw(target: number): void { this.flip = null; this.yaw = target; this.group.rotation.y = target; }
 }
 
 const SPRITE_SCALE = 1.45; // standee height relative to TOKEN
+const FLIP_AT = 0.95;      // heading difference (radians) beyond which a standee flips over instead of turning smoothly
 
 /** How much to enlarge a character whose pixels fill only part of the cell height (kept within 1–1.6×). */
 function contentScaleFor(canvas: HTMLCanvasElement): number {
@@ -588,8 +600,7 @@ export class Board3D implements BoardView {
       this.scene.add(tok.group);
       this.tokens.set(p.id, tok);
       this.tokenPos.set(p.id, p.position);
-      tok.yaw = tok.targetYaw = this.yawFor(p.position);
-      tok.group.rotation.y = tok.yaw;
+      tok.snapYaw(this.headingFor(tok));
       void getCharacter(p.token).then((ch) => { if (this.tokens.get(p.id) === tok) { tok.useCharacter(ch); mat.visible = true; } }).catch(() => { void svgTexture(tokenSvg(p.token), 512).then((tex) => { mat.map = tex; mat.visible = true; mat.needsUpdate = true; }); });
     }
     this.resize();
@@ -885,16 +896,17 @@ export class Board3D implements BoardView {
     return new THREE.Vector3(x, BOARD_Y, z);
   }
 
-  /** Heading for a standee on a space: its face points outward, off the board, on that side. */
-  private yawFor(index: number): number {
-    const { out } = this.spaceDirs(index);
-    return Math.atan2(out.x, out.y);
+  /** Heading that points the standee's shown side at the camera (its back when flipped). */
+  private headingFor(tok: TokenObj): number {
+    const p = tok.group.position;
+    return Math.atan2(this.camPos.x - p.x, this.camPos.z - p.z) + (tok.facing < 0 ? Math.PI : 0);
   }
 
-  /** In-plane facing (art looks right by default) for a move in world direction (dx, dz) while standing on `index`. */
-  private facingFor(dx: number, dz: number, index: number, tok: TokenObj): number {
-    const { out } = this.spaceDirs(index);
-    const rightX = out.y, rightZ = -out.x; // viewer outside the board, looking in
+  /** Which way (screen right = 1, screen left = -1) a move in world direction (dx, dz) goes as seen from the camera. */
+  private facingFor(dx: number, dz: number, tok: TokenObj): number {
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    const rightX = -dir.z, rightZ = dir.x; // camera's right, flattened onto the board
     const dot = dx * rightX + dz * rightZ;
     if (Math.abs(dot) < 0.05) return tok.facing;
     return dot >= 0 ? 1 : -1;
@@ -911,9 +923,8 @@ export class Board3D implements BoardView {
       if (!tok) continue;
       const slots = this.slotsAt(p.position, state);
       const target = this.slotPosition(p.position, Math.max(0, slots.indexOf(p.id)), p.inJail);
-      tok.targetYaw = this.yawFor(p.position);
       if (animate) this.tweenTo(tok, target, 250, false);
-      else { tok.group.position.copy(target); tok.yaw = tok.targetYaw; tok.group.rotation.y = tok.yaw; }
+      else { tok.group.position.copy(target); tok.snapYaw(this.headingFor(tok)); }
     }
     this.updateRing();
   }
@@ -942,13 +953,8 @@ export class Board3D implements BoardView {
     });
   }
 
-  private setFacing(tok: TokenObj, facing: number): void {
-    if (tok.facing === facing) return;
-    tok.facing = facing;
-    const from = -facing;
-    const w = tok.frame !== null ? TOKEN * SPRITE_SCALE * tok.contentScale : TOKEN;
-    this.tweens.push(timed(160, (t) => { const f = from + (facing - from) * t; tok.sprite.scale.x = w * f; }));
-  }
+  /** Turning around is a paper flip: the render loop sees the new heading and rotates the cutout over. */
+  private setFacing(tok: TokenObj, facing: number): void { tok.facing = facing; }
 
   async moveToken(playerId: string, from: number, to: number, opts: { direct?: boolean; backward?: boolean }, state: GameState): Promise<void> {
     const tok = this.tokens.get(playerId);
@@ -959,8 +965,7 @@ export class Board3D implements BoardView {
       const slot = Math.max(0, this.slotsAt(to, state).indexOf(playerId));
       const target = this.slotPosition(to, slot, to === 10 ? true : !!player?.inJail);
       const d = target.clone().sub(tok.group.position);
-      tok.targetYaw = this.yawFor(to);
-      this.setFacing(tok, this.facingFor(d.x, d.z, to, tok));
+      this.setFacing(tok, this.facingFor(d.x, d.z, tok));
       // one big leap
       const startPos = tok.group.position.clone();
       this.busyTokens.add(tok);
@@ -983,8 +988,7 @@ export class Board3D implements BoardView {
       const slot = pos === to ? Math.max(0, this.slotsAt(pos, state).indexOf(playerId)) : 0;
       const target = this.slotPosition(pos, slot, false);
       const d = target.clone().sub(tok.group.position);
-      tok.targetYaw = this.yawFor(pos);
-      this.setFacing(tok, this.facingFor(d.x, d.z, pos, tok));
+      this.setFacing(tok, this.facingFor(d.x, d.z, tok));
       sfx.step();
       await this.tweenTo(tok, target, stepMs, true);
     }
@@ -1207,10 +1211,9 @@ export class Board3D implements BoardView {
     this.last = now;
     this.updateCamera(now, dt);
     for (let i = this.tweens.length - 1; i >= 0; i--) if (!this.tweens[i].update(now, dt)) this.tweens.splice(i, 1);
-    // Paper cutouts always face the camera (turning only around the vertical axis)
+    // Paper cutouts face the camera (billboards on a vertical axis), flipping over when they have to turn far
     for (const tok of this.tokens.values()) {
-      tok.yaw = approachAngle(tok.yaw, tok.targetYaw, dt, 140);
-      tok.group.rotation.y = tok.yaw;
+      tok.turnToward(this.headingFor(tok), now, dt);
       if (tok.squash > 0) tok.squash = Math.max(0, tok.squash - dt / 260);
       // idle pose only when no tween is driving this token (tweens call applyPose themselves)
       if (!this.busyTokens.has(tok)) tok.applyPose(0, 0, now);
