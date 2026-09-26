@@ -137,12 +137,50 @@ function grassTexture(): THREE.CanvasTexture {
   c.width = 1024; c.height = 1024;
   const ctx = c.getContext('2d')!;
   ctx.fillStyle = '#5cb84a'; ctx.fillRect(0, 0, 1024, 1024);
-  for (let i = 0; i < 12; i++) stripSprite(ctx, BUSH, Math.random() * 900, Math.random() * 980, 16 * 2.5 * (2 + Math.floor(Math.random() * 3)), 16 * 2.5, 2.5);
+  ctx.fillStyle = '#58b046';
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if ((x + y) % 2) ctx.fillRect(x * 64, y * 64, 64, 64);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.magFilter = THREE.NearestFilter;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(5, 5);
+  return t;
+}
+
+/**
+ * A painted level backdrop for the walls around the table: sky, clouds, a row of distant
+ * hills and bushes standing on a ground line. The top row is the plain sky colour so the
+ * wall's upper edge disappears into the scene background.
+ */
+function backdropTexture(): THREE.CanvasTexture {
+  const W = 2048, H = 640;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, SKY); grad.addColorStop(0.55, '#7fb6ff'); grad.addColorStop(1, '#9ccbff');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+  const sc = 4; // 4 texture px per sprite px
+  const ground = 16 * sc;
+  const base = H - ground;
+  // clouds
+  const clouds: [number, number, number][] = [[60, 90, 5], [520, 40, 3], [900, 120, 6], [1380, 60, 4], [1760, 150, 3]];
+  for (const [x, y, n] of clouds) stripSprite(ctx, CLOUD, x, y, 16 * sc * n, 16 * sc, sc);
+  drawSprite(ctx, 'cloud_big', 1180, 200, 48 * sc, 32 * sc);
+  drawSprite(ctx, 'cloud_mid', 300, 230, 32 * sc, 32 * sc);
+  // hills: big ones behind, small ones in front
+  for (const [x, w] of [[-40, 48 * 7], [700, 48 * 6], [1500, 48 * 7]] as [number, number][]) drawSprite(ctx, 'hill', x, base - w / 2, w, w / 2);
+  for (const [x, w] of [[380, 48 * 4], [1120, 48 * 4.5], [1900, 48 * 4]] as [number, number][]) drawSprite(ctx, 'hill', x, base - w / 2, w, w / 2);
+  // bushes on the ground line
+  for (const [x, n] of [[120, 3], [560, 2], [860, 4], [1300, 3], [1650, 2], [1980, 3]] as [number, number][]) stripSprite(ctx, BUSH, x, base - 16 * sc, 16 * sc * n, 16 * sc, sc);
+  // ground
+  stripSprite(ctx, GROUND, 0, base, W, ground, sc);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
   return t;
 }
 
@@ -505,20 +543,37 @@ export class Board3D implements BoardView {
   }
 
   /** Hills and clouds around a themed board, as upright cutouts that keep facing the camera. */
+  /** Level backdrop walls around the table, plus a few upright cutout props near the board. */
   private addScenery(): void {
-    const mk = (name: string, x: number, y: number, z: number, height: number) => {
-      const canvas = spriteCanvas(name, 1);
+    const D = 30, WALL_H = 9.4; // wall distance and height; the texture's 640px height ↔ WALL_H units
+    const tex = backdropTexture();
+    for (let i = 0; i < 4; i++) {
+      const wall = new THREE.Mesh(new THREE.PlaneGeometry(2 * D + 0.2, WALL_H), new THREE.MeshBasicMaterial({ map: tex, fog: false }));
+      wall.position.y = WALL_H / 2 - 0.02;
+      const a = (i * Math.PI) / 2;
+      wall.position.x = Math.sin(a) * D; wall.position.z = Math.cos(a) * D;
+      wall.rotation.y = a + Math.PI; // faces the middle
+      this.scene.add(wall);
+    }
+    // upright props near the board (cutouts turn to face the camera)
+    const mk = (canvas: HTMLCanvasElement | null, x: number, y: number, z: number, height: number) => {
       if (!canvas) return;
-      const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace; tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false;
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(height * canvas.width / canvas.height, height), new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05, side: THREE.DoubleSide, fog: true }));
+      const t = new THREE.CanvasTexture(canvas); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; t.generateMipmaps = false;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(height * canvas.width / canvas.height, height), new THREE.MeshBasicMaterial({ map: t, transparent: true, alphaTest: 0.05, side: THREE.DoubleSide, fog: false }));
       m.position.set(x, y + height / 2, z);
       this.scene.add(m);
       this.billboards.push(m);
     };
-    const far = HALF + 3.2;
-    mk('hill', -far, 0, -2, 3.2); mk('hill', far + 1, 0, 3, 3.6); mk('hill', 1, 0, -far - 1, 3.4); mk('hill', -3, 0, far + 1.5, 3);
-    mk('hill_small', far - 1, 0, -5, 1.6); mk('hill_small', -far + 1, 0, 6, 1.6); mk('castle_big', far + 3, 0, -far, 4.2);
-    mk('cloud_big', -far, 4.5, far, 2); mk('cloud_small', far, 5.2, -far * 0.5, 1.6); mk('cloud_mid', 0, 6, -far - 2, 1.8); mk('cloud_small', -far * 0.5, 5.5, -far, 1.6); mk('cloud_big', far * 0.7, 4.8, far + 1, 2.2);
+    const bush = (n: number) => {
+      const c = document.createElement('canvas'); c.width = 16 * n; c.height = 16;
+      stripSprite(c.getContext('2d')!, BUSH, 0, 0, 16 * n, 16, 1);
+      return c;
+    };
+    const far = HALF + 2.4;
+    mk(spriteCanvas('hill', 1), -far - 2, 0, -4, 2.4); mk(spriteCanvas('hill', 1), far + 2.5, 0, 5, 2.6); mk(spriteCanvas('hill', 1), 4, 0, -far - 2.5, 2.2);
+    mk(spriteCanvas('castle_big', 1), far + 4, 0, -far - 1, 4.4);
+    mk(bush(3), -far, 0, 3, 0.8); mk(bush(2), far, 0, -6, 0.7); mk(bush(4), -5, 0, far + 0.5, 0.9); mk(bush(2), 7, 0, far + 1, 0.7); mk(bush(3), -far - 1, 0, -far, 0.8);
+    mk(spriteCanvas('cloud_big', 1), -far - 3, 5, far - 2, 2.2); mk(spriteCanvas('cloud_mid', 1), far + 3, 6, -2, 1.9); mk(spriteCanvas('cloud_small', 1), 2, 6.5, -far - 4, 2);
   }
 
   private deckColor(kind: 'chance' | 'chest'): string {
