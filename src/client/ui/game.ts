@@ -70,15 +70,17 @@ export class GameScreen {
     this.timerHandle = window.setInterval(() => this.tickTimer(), 500);
   }
 
+  private locked: HTMLButtonElement[] = [];
   private lockButtons(): void {
-    document.querySelectorAll<HTMLButtonElement>('.dialog button, .actions button').forEach((b) => { b.disabled = true; });
+    this.locked = [];
+    document.querySelectorAll<HTMLButtonElement>('.dialog button, .actions button').forEach((b) => { if (!b.disabled) { b.disabled = true; this.locked.push(b); } });
   }
 
-  /** The server rejected something: re-enable the UI from the current state. */
+  /** The server rejected something: give the buttons back without rebuilding open dialogs. */
   onError(): void {
-    if (!this.state || this.processing) return;
-    this.renderActions();
-    this.syncDialogs(true);
+    for (const b of this.locked) b.disabled = false;
+    this.locked = [];
+    if (this.state && !this.processing) this.renderActions();
   }
 
   destroy(): void {
@@ -122,6 +124,7 @@ export class GameScreen {
       this.render();
       return;
     }
+    this.locked = [];
     this.queue.push(...events);
     if (!this.processing) void this.process();
   }

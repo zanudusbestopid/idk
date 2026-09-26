@@ -40,20 +40,21 @@ await p1.click('text=Start game');
 await Promise.all([p1, p2].map((p) => p.waitForSelector('.game .board')));
 await p1.waitForTimeout(500);
 
+async function tryClick(page, sel) { try { await page.click(sel, { timeout: 2500 }); return true; } catch { return false; } }
 async function waitIdle(page) { await page.waitForFunction(() => !document.querySelector('.actions .hint')?.textContent?.includes('…'), null, { timeout: 15000 }).catch(() => {}); }
 async function playTurn(page, other) {
   // roll, buy if offered, dismiss cards, end turn
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 14; i++) {
     await waitIdle(page);
-    if (await page.locator('.card-pop').count()) { await page.click('.card-pop'); continue; }
-    if (await page.locator('.dialog button:has-text("Buy for"):enabled').count()) { await page.click('.dialog button:has-text("Buy for")'); continue; }
-    if (await page.locator('.dialog button:has-text("Decline")').count()) { await page.click('.dialog button:has-text("Decline")'); continue; }
-    if (await page.locator('.actions button:has-text("Roll dice"):enabled').count()) { await page.click('.actions button:has-text("Roll dice")'); await page.waitForTimeout(400); continue; }
-    if (await page.locator('.actions button:has-text("Roll for doubles"):enabled').count()) { await page.click('.actions button:has-text("Roll for doubles")'); await page.waitForTimeout(400); continue; }
-    if (await page.locator('.actions button:has-text("End turn"):enabled').count()) { await page.click('.actions button:has-text("End turn")'); return; }
+    if (await page.locator('.card-pop').count()) { await tryClick(page, '.card-pop'); continue; }
+    if (await page.locator('.dialog button:has-text("Buy for"):enabled').count()) { await tryClick(page, '.dialog button:has-text("Buy for"):enabled'); await page.waitForTimeout(500); continue; }
+    if (await page.locator('.dialog button:has-text("Decline"):enabled').count()) { await tryClick(page, '.dialog button:has-text("Decline"):enabled'); await page.waitForTimeout(500); continue; }
+    if (await page.locator('.actions button:has-text("Roll dice"):enabled').count()) { await tryClick(page, '.actions button:has-text("Roll dice"):enabled'); await page.waitForTimeout(500); continue; }
+    if (await page.locator('.actions button:has-text("Roll for doubles"):enabled').count()) { await tryClick(page, '.actions button:has-text("Roll for doubles"):enabled'); await page.waitForTimeout(500); continue; }
+    if (await page.locator('.actions button:has-text("End turn"):enabled').count()) { await tryClick(page, '.actions button:has-text("End turn"):enabled'); await page.waitForTimeout(300); return; }
     // auction: other passes, we pass
-    if (await other.locator('.dialog .bidform:visible button:has-text("Pass"):enabled').count()) { await other.click('.dialog .bidform button:has-text("Pass")'); }
-    if (await page.locator('.dialog .bidform:visible button:has-text("Pass"):enabled').count()) { await page.click('.dialog .bidform button:has-text("Pass")'); }
+    if (await other.locator('.dialog .bidform:visible button:has-text("Pass"):enabled').count()) { await tryClick(other, '.dialog .bidform:visible button:has-text("Pass"):enabled'); }
+    if (await page.locator('.dialog .bidform:visible button:has-text("Pass"):enabled').count()) { await tryClick(page, '.dialog .bidform:visible button:has-text("Pass"):enabled'); }
     await page.waitForTimeout(400);
   }
 }

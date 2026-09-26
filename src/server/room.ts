@@ -255,6 +255,10 @@ export class Room {
   }
 
   leave(m: Member): void {
+    // Detach the socket first so the leaver does not receive the state produced by their own exit.
+    const sock = m.socket;
+    m.socket = null;
+    m.connected = false;
     if (this.status === 'playing' && this.state) {
       const p = this.state.players.find((x) => x.id === m.id);
       if (p && !p.bankrupt) {
@@ -262,10 +266,9 @@ export class Room {
         if (r.ok) { this.state = r.state; this.afterStateChange(r.events); }
       }
     }
-    this.send(m, { t: 'left' });
-    if (m.socket) { try { m.socket.close(); } catch { /* ignore */ } }
-    m.socket = null;
-    m.connected = false;
+    if (sock && sock.readyState === sock.OPEN) {
+      try { sock.send(JSON.stringify({ t: 'left' } satisfies ServerMessage)); sock.close(); } catch { /* ignore */ }
+    }
     if (this.status === 'lobby') this.removeMember(m, `${m.name} left the room`);
     else {
       this.system(`${m.name} left the game`);

@@ -67,6 +67,9 @@ function leave(): void {
 }
 
 net.on((msg: ServerMessage) => {
+  // Once we have left (or never joined), ignore room traffic that may still be in flight.
+  const inRoom = store.state.playerId !== null;
+  if (!inRoom && (msg.t === 'room' || msg.t === 'state' || msg.t === 'timer' || msg.t === 'chat' || msg.t === 'chatHistory')) return;
   switch (msg.t) {
     case 'welcome': {
       store.set({ playerId: msg.playerId, room: msg.room, chat: [] });
