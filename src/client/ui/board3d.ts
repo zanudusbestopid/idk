@@ -160,7 +160,30 @@ function spaceDecorFor(i: number): { name: string; h: number } | undefined {
 export const BOARD_HALF = HALF;
 /** A canvas for a scenery prop: a sprite name, or 'bush:N' / 'pipe:N' for assembled strips and stacks. */
 export function propImage(name: string): HTMLCanvasElement | null { return propCanvas(name); }
+const animCache = new Map<string, { frames: HTMLCanvasElement[]; ms: number } | null>();
+/** Frames of an animation, normalised to one size (bottom-centre aligned), or null when it has none. */
+function animFrames(name: string): { frames: HTMLCanvasElement[]; ms: number } | null {
+  if (animCache.has(name)) return animCache.get(name) ?? null;
+  const a = art.anims[name];
+  let out: { frames: HTMLCanvasElement[]; ms: number } | null = null;
+  if (a && a.frames.length) {
+    const srcs = a.frames.map((f) => (f.startsWith('anim:') ? null : propCanvas(f))).filter((c): c is HTMLCanvasElement => !!c);
+    if (srcs.length) {
+      const w = Math.max(...srcs.map((c) => c.width)), hgt = Math.max(...srcs.map((c) => c.height));
+      const frames = srcs.map((c) => {
+        const n = document.createElement('canvas');
+        n.width = w; n.height = hgt;
+        n.getContext('2d')!.drawImage(c, Math.floor((w - c.width) / 2), hgt - c.height);
+        return n;
+      });
+      out = { frames, ms: Math.max(30, a.ms || 150) };
+    }
+  }
+  animCache.set(name, out);
+  return out;
+}
 function propCanvas(name: string): HTMLCanvasElement | null {
+  if (name.startsWith('anim:')) return animFrames(name.slice(5))?.frames[0] ?? null;
   const m = /^(bush|pipe):(\d+)$/.exec(name);
   if (m) {
     const n = Math.max(1, Math.min(8, Number(m[2])));
@@ -365,16 +388,40 @@ class PropObj {
   private baseY: number;
   private floating: boolean;
   private phase = Math.random() * 10;
-  constructor(canvas: HTMLCanvasElement, height: number) {
-    const { geometry, texture } = pixelCutout(canvas, 1 / canvas.height); // depth of one sprite pixel, in the unit-height frame
-    const face = new THREE.MeshBasicMaterial({ map: texture, transparent: true, alphaTest: 0.05, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(geometry, [face, new THREE.MeshLambertMaterial({ color: INK })]);
-    mesh.scale.set(height, height, height);
-    mesh.castShadow = true;
-    mesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: texture, alphaTest: 0.5 });
-    this.group.add(mesh);
+  private frames: { geometry: THREE.BufferGeometry; texture: THREE.Texture }[] | null = null;
+  private frameMs = 150;
+  private frameIdx = 0;
+  private mesh: THREE.Mesh;
+  private face: THREE.MeshBasicMaterial;
+  private depthMat: THREE.MeshDepthMaterial;
+  /** `frames` (all the same size) make an animated cutout: each frame has its own silhouette and picture. */
+  constructor(canvas: HTMLCanvasElement, height: number, frames?: HTMLCanvasElement[], frameMs = 150) {
+    const first = frames && frames.length > 1 ? frames[0] : canvas;
+    const { geometry, texture } = pixelCutout(first, 1 / first.height); // depth of one sprite pixel, in the unit-height frame
+    this.face = new THREE.MeshBasicMaterial({ map: texture, transparent: true, alphaTest: 0.05, side: THREE.DoubleSide });
+    this.mesh = new THREE.Mesh(geometry, [this.face, new THREE.MeshLambertMaterial({ color: INK })]);
+    this.mesh.scale.set(height, height, height);
+    this.mesh.castShadow = true;
+    this.depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: texture, alphaTest: 0.5 });
+    this.mesh.customDepthMaterial = this.depthMat;
+    if (frames && frames.length > 1) {
+      this.frames = frames.map((f) => pixelCutout(f, 1 / f.height)); // cached per frame canvas, so swapping is free
+      this.frameMs = frameMs;
+    }
+    this.group.add(this.mesh);
     this.baseY = 0;
     this.floating = false;
+  }
+  /** Animated props swap to their next frame (shape and picture) when its time comes. */
+  animate(now: number): void {
+    if (!this.frames) return;
+    const f = Math.floor(now / this.frameMs) % this.frames.length;
+    if (f === this.frameIdx) return;
+    this.frameIdx = f;
+    const fr = this.frames[f];
+    this.mesh.geometry = fr.geometry;
+    this.face.map = fr.texture;
+    this.depthMat.map = fr.texture;
   }
   /** Clouds drift up and down a little; grounded props stay put. */
   setFloating(base: number, on = true): void { this.floating = on; this.baseY = base; }
@@ -607,15 +654,21 @@ export class Board3D implements BoardView {
     this.props = [];
     if (!themed()) return;
     for (const def of art.props ?? this.defaultProps()) {
-      const canvas = propCanvas(def.sprite);
-      if (!canvas) continue;
-      const prop = new PropObj(canvas, def.h);
-      prop.id = def.id;
-      prop.group.position.set(def.x, def.y, def.z);
-      if (def.float) prop.setFloating(def.y);
+      const prop = this.makeProp(def);
+      if (!prop) continue;
       this.scene.add(prop.group);
       this.props.push(prop);
     }
+  }
+  private makeProp(def: PropDef): PropObj | null {
+    const anim = def.sprite.startsWith('anim:') ? animFrames(def.sprite.slice(5)) : null;
+    const canvas = propCanvas(def.sprite);
+    if (!canvas) return null;
+    const prop = new PropObj(canvas, def.h, anim?.frames, anim?.ms);
+    prop.id = def.id;
+    prop.group.position.set(def.x, def.y, def.z);
+    if (def.float) prop.setFloating(def.y);
+    return prop;
   }
 
   /** Art editor: the board face texture (a 2048² canvas) as drawn right now. */
@@ -668,13 +721,9 @@ export class Board3D implements BoardView {
   }
   /** Art editor: put one prop into the scene right away (no rebuild). False when its art is missing. */
   addProp(def: PropDef): boolean {
-    const canvas = propCanvas(def.sprite);
-    if (!canvas) return false;
+    const prop = this.makeProp(def);
+    if (!prop) return false;
     this.removeProp(def.id);
-    const prop = new PropObj(canvas, def.h);
-    prop.id = def.id;
-    prop.group.position.set(def.x, def.y, def.z);
-    if (def.float) prop.setFloating(def.y);
     this.scene.add(prop.group);
     this.props.push(prop);
     return true;
@@ -714,6 +763,7 @@ export class Board3D implements BoardView {
 
   /** Redraw everything that comes from the art pack after the art editor changed it. */
   refreshArt(): void {
+    animCache.clear();
     if (this.state) { this.drawBoard(this.state); this.updateStatic(this.state); }
     this.rebuildDecks();
     this.rebuildScenery();
@@ -1692,7 +1742,7 @@ export class Board3D implements BoardView {
       // idle pose only when no tween is driving this token (tweens call applyPose themselves)
       if (!this.busyTokens.has(tok)) tok.applyPose(0, 0, now);
     }
-    for (const p of this.props) { p.turnToward(Math.atan2(this.camPos.x - p.group.position.x, this.camPos.z - p.group.position.z), now, dt); p.bob(now); }
+    for (const p of this.props) { p.turnToward(Math.atan2(this.camPos.x - p.group.position.x, this.camPos.z - p.group.position.z), now, dt); p.bob(now); p.animate(now); }
     const pulse = 1 + Math.sin(now / 350) * 0.08;
     this.ring.scale.set(pulse, pulse, 1);
     this.renderer.render(this.scene, this.camera);

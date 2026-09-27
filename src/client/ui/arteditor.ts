@@ -4,12 +4,12 @@
 import { h, append, clear, toast } from '../dom.js';
 import { THEME, deckName } from '../theme.js';
 import { packImage, sheetSources, spriteCanvas, spriteNames } from '../art/pack.js';
-import { applyArt, art, exportArt, importArt, isOverridden, removeArtSprite, resetArt, saveArt, setArtSprite, setProps, setSpaceArt, type PropDef, type SpaceArt } from '../art/overrides.js';
+import { animNames, applyArt, art, exportArt, importArt, isOverridden, removeAnim, removeArtSprite, resetArt, saveArt, setAnim, setArtSprite, setProps, setSpaceArt, type PropDef, type SpaceArt } from '../art/overrides.js';
 import { BOARD_HALF, propImage, type Board3D } from './board3d.js';
 import { SheetView, decodeImage, sheetImage, type Cut, type SheetImage } from './sheetview.js';
 import { Composer } from './composer.js';
 
-type Tab = 'sheet' | 'compose' | 'sprites' | 'spaces' | 'scenery' | 'slots';
+type Tab = 'sheet' | 'compose' | 'animate' | 'sprites' | 'spaces' | 'scenery' | 'slots';
 interface Current { kind: 'cut' | 'sprite'; name: string; canvas: HTMLCanvasElement; info: string }
 
 /** Named sprites the board draws directly, so replacing them re-skins that part of the game. */
@@ -237,6 +237,114 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     return el;
   }
 
+  // ---------- animate tab ----------
+  let animName = '';
+  let animFrames: string[] = [];
+  let animMs = 150;
+  let animTimer = 0;
+  function frameThumb(name: string): HTMLCanvasElement | null { return spriteThumb(name); }
+  function animateTab(): HTMLElement {
+    const nameIn = h('input', { type: 'text', placeholder: 'animation name', value: animName, style: { width: '150px' } });
+    nameIn.addEventListener('input', () => { animName = nameIn.value.trim(); });
+    const msIn = num(animMs, 10, (v) => { animMs = Math.max(30, Math.round(v)); }, 64);
+    const loadSel = select([{ value: '', label: 'load saved…' }, ...animNames().map((n) => ({ value: n, label: n }))], '', (v) => {
+      const a = art.anims[v];
+      if (!a) return;
+      animName = v; animFrames = [...a.frames]; animMs = a.ms;
+      renderTab();
+    });
+    const splitN = h('input', { type: 'number', min: '2', max: '32', step: '1', value: '4', style: { width: '52px' } });
+    const addFrame = (): void => {
+      if (!current) { toast('Nothing to add: cut a frame on the Sheet tab or pick a sprite.', 'error'); return; }
+      snapshot();
+      const base = animName || 'anim';
+      const n = useCurrent(`${base}_f${animFrames.length + 1}`);
+      if (!n) { history.pop(); return; }
+      animFrames.push(n);
+      afterArt();
+    };
+    const split = (): void => {
+      if (!current) { toast('Nothing to split: select a strip of frames on the Sheet tab first.', 'error'); return; }
+      const n = Math.max(2, Math.min(32, Math.round(Number(splitN.value)) || 4));
+      const c = current.canvas;
+      if (c.width % n !== 0) { toast(`${c.width} px does not divide into ${n} equal frames.`, 'error'); return; }
+      snapshot();
+      const base = animName || (current.kind === 'sprite' ? current.name : 'anim');
+      const fw = c.width / n;
+      const names: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const f = document.createElement('canvas');
+        f.width = fw; f.height = c.height;
+        f.getContext('2d')!.drawImage(c, i * fw, 0, fw, c.height, 0, 0, fw, c.height);
+        const name = `${base}_f${animFrames.length + i + 1}`;
+        setArtSprite(name, f);
+        names.push(name);
+      }
+      animFrames.push(...names);
+      afterArt();
+      toast(`Split into ${n} frames of ${fw}×${c.height}.`);
+    };
+    const save = (): void => {
+      const name = nameIn.value.trim();
+      if (!name) { toast('Give the animation a name.', 'error'); nameIn.focus(); return; }
+      if (animFrames.length < 2) { toast('An animation needs at least two frames.', 'error'); return; }
+      snapshot();
+      animName = name;
+      setAnim(name, { frames: animFrames, ms: animMs });
+      afterArt();
+      toast(`Saved animation “${name}”. Place it from the Scenery palette (Animations).`);
+    };
+    const del = (): void => {
+      const name = nameIn.value.trim();
+      if (!name || !art.anims[name]) return;
+      snapshot();
+      removeAnim(name);
+      animFrames = []; animName = '';
+      afterArt();
+    };
+    const strip = h('div', { class: 'arted__frames' });
+    animFrames.forEach((f, i) => {
+      const mv = (to: number) => { if (to < 0 || to >= animFrames.length) return; const [x] = animFrames.splice(i, 1); animFrames.splice(to, 0, x); renderTab(); };
+      strip.append(h('div', { class: 'arted__frame' },
+        thumb(frameThumb(f), 40), h('span', { title: f }, `${i + 1}`),
+        h('span', { class: 'btns' },
+          h('button', { class: 'btn btn--sm', type: 'button', title: 'earlier', onClick: () => mv(i - 1) }, '◀'),
+          h('button', { class: 'btn btn--sm', type: 'button', title: 'later', onClick: () => mv(i + 1) }, '▶'),
+          h('button', { class: 'btn btn--sm', type: 'button', title: 'remove this frame', onClick: () => { animFrames.splice(i, 1); renderTab(); } }, '✕'))));
+    });
+    if (!animFrames.length) strip.append(h('span', { class: 'muted small' }, 'no frames yet'));
+    const prev = document.createElement('canvas');
+    prev.className = 'arted__animprev';
+    const drawPrev = () => {
+      const frames = animFrames.map(frameThumb).filter((c): c is HTMLCanvasElement => !!c);
+      if (!frames.length) { prev.width = 64; prev.height = 64; return; }
+      const w = Math.max(...frames.map((c) => c.width)), hgt = Math.max(...frames.map((c) => c.height));
+      const k = Math.max(1, Math.min(8, Math.floor(128 / Math.max(w, hgt))));
+      if (prev.width !== w * k || prev.height !== hgt * k) { prev.width = w * k; prev.height = hgt * k; }
+      const f = frames[Math.floor(performance.now() / animMs) % frames.length];
+      const ctx = prev.getContext('2d')!;
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, prev.width, prev.height);
+      ctx.drawImage(f, Math.floor((w - f.width) / 2) * k, (hgt - f.height) * k, f.width * k, f.height * k);
+    };
+    window.clearInterval(animTimer);
+    animTimer = window.setInterval(drawPrev, 30);
+    drawPrev();
+    const saved = animName && art.anims[animName];
+    return h('div', { class: 'arted__tab arted__tab--scroll' },
+      h('p', { class: 'arted__hint' }, 'Build an animated piece from frames: cut each frame on the Sheet tab and add it, or select a whole strip of frames in one go and split it. Then save, and place it from the Scenery palette under “Animations”.'),
+      h('div', { class: 'arted__row' }, h('label', null, 'Animation'), nameIn, loadSel, h('label', null, 'ms per frame'), msIn),
+      h('div', { class: 'arted__row' },
+        h('button', { class: 'btn btn--sm btn--blue', type: 'button', disabled: !current, onClick: addFrame }, current ? `Add “${current.kind === 'cut' ? 'cut' : current.name}” as frame` : 'Add current art as frame'),
+        h('button', { class: 'btn btn--sm', type: 'button', disabled: !current, onClick: split }, 'Split current art into'), splitN, h('span', { class: 'muted small' }, 'frames'),
+        h('button', { class: 'btn btn--sm', type: 'button', disabled: !animFrames.length, onClick: () => { animFrames = []; renderTab(); } }, 'Clear frames')),
+      h('div', { class: 'arted__row arted__row--top' }, prev, h('div', { class: 'arted__fields' }, h('span', { class: 'muted small' }, `${animFrames.length} frame${animFrames.length === 1 ? '' : 's'} · ${animMs} ms each · ${animFrames.length ? (1000 / animMs).toFixed(1) : '0'} fps`), strip)),
+      h('div', { class: 'arted__row' },
+        h('button', { class: 'btn btn--sm btn--primary', type: 'button', onClick: save }, saved ? 'Save changes' : 'Save animation'),
+        saved ? h('button', { class: 'btn btn--sm btn--warn', type: 'button', onClick: del }, 'Delete animation') : null,
+        h('span', { class: 'muted small' }, `${animNames().length} saved`)));
+  }
+
   // ---------- sprites tab ----------
   function spritesTab(): HTMLElement {
     const filterIn = h('input', { type: 'text', placeholder: 'filter by name', value: filter, style: { width: '160px' } });
@@ -265,6 +373,9 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
       const renameIn = h('input', { type: 'text', value: c.name, style: { width: '150px' } });
       append(detail, [
         h('div', { class: 'arted__row' }, thumb(c.canvas, 96), h('div', null, h('b', null, c.name), h('div', { class: 'muted small' }, `${c.canvas.width}×${c.canvas.height} px · ${mine ? 'yours' : 'from the pack'}`), h('div', { class: 'muted small' }, used.length ? `used by ${used.join(', ')}` : 'not used anywhere yet'))),
+        h('div', { class: 'arted__row' },
+          h('button', { class: 'btn btn--sm btn--blue', type: 'button', title: 'Open it on the Sheet tab to touch up (wand, trim, nudge) and save under the same name', onClick: () => editSprite(c.name) }, 'Edit in Sheet'),
+          h('button', { class: 'btn btn--sm', type: 'button', title: 'Open it in the Compose grid as the stamp', onClick: () => { tab = 'compose'; renderTab(); } }, 'Compose with it')),
         mine ? h('div', { class: 'arted__row' },
           renameIn,
           h('button', { class: 'btn btn--sm', type: 'button', onClick: () => {
@@ -527,7 +638,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
       p ? h('div', { class: 'arted__prop' },
         h('div', { class: 'arted__row' }, h('label', null, 'Name'), h('input', { type: 'text', value: p.id, style: { width: '130px' }, onChange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim(); if (v && !props.some((q) => q !== p && q.id === v)) { snapshot(); p.id = v; propId = v; commitProps(); afterArt(); } } }),
           h('label', null, 'Art'),
-          select([...ASSEMBLED.map((a) => ({ value: a, label: a })), ...spriteNames().map((n) => ({ value: n, label: isOverridden(n) ? `${n} ★` : n }))], p.sprite, (v) => { snapshot(); p.sprite = v; commitProps(); afterArt(); }),
+          select([...animNames().map((a) => ({ value: `anim:${a}`, label: `anim: ${a}` })), ...ASSEMBLED.map((a) => ({ value: a, label: a })), ...spriteNames().map((n) => ({ value: n, label: isOverridden(n) ? `${n} ★` : n }))], p.sprite, (v) => { snapshot(); p.sprite = v; commitProps(); afterArt(); }),
           useBtn(`${p.id}_art`, (n) => { p.sprite = n; commitProps(); }),
           thumb(spriteThumb(p.sprite), 36)),
         h('div', { class: 'arted__row' },
@@ -577,6 +688,18 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     if (dragMoved) commitProps(); else history.pop(); // a plain click only selects
     updateBar();
     renderTab();
+  }
+
+  /** Open a sprite on the Sheet tab, whole and selected, so it can be touched up and saved under the same name. */
+  function editSprite(name: string): void {
+    const c = spriteThumb(name);
+    if (!c) return;
+    sheet.loadSprite(name, c);
+    nameInput.value = name;
+    tab = 'sheet';
+    showPanel(true);
+    renderTab();
+    toast(`Editing “${name}”: use the wand, trim or nudge, then Save sprite to replace it.`);
   }
 
   // ---------- palette: drag art from a vertical list onto the table ----------
@@ -653,7 +776,11 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
     filterIn.addEventListener('input', () => { palFilter = filterIn.value.trim().toLowerCase(); renderList(); });
     const list = h('div', { class: 'arted__palette-list' });
     const item = (name: string | null, label: string, canvas: HTMLCanvasElement | null): HTMLElement => {
-      const el = h('div', { class: 'arted__pal', title: `Drag “${label}” onto the table (or click to add it in front of the board)` }, thumb(canvas, 40), h('span', null, label));
+      const editable = !!name && !name.includes(':');
+      const edit = editable ? h('button', { class: 'arted__pal-edit', type: 'button', title: 'Edit this sprite on the Sheet tab' }, '✎') : null;
+      edit?.addEventListener('pointerdown', (e) => e.stopPropagation());
+      edit?.addEventListener('click', (e) => { e.stopPropagation(); if (name) editSprite(name); });
+      const el = h('div', { class: 'arted__pal', title: `Drag “${label}” onto the table (or click to add it in front of the board)` }, thumb(canvas, 40), h('span', null, label), edit);
       el.addEventListener('pointerdown', (e) => paletteDrag(el, name, e));
       return el;
     };
@@ -662,6 +789,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
       const f = palFilter;
       if (current && (!f || 'current art'.includes(f))) { list.append(h('div', { class: 'arted__pal-head' }, 'Current art'), item(current.kind === 'sprite' ? current.name : null, current.kind === 'cut' ? `cut ${current.canvas.width}×${current.canvas.height}` : current.name, current.canvas)); }
       const groups: [string, string[]][] = [
+        ['Animations', animNames().map((n) => `anim:${n}`)],
         ['Assembled', ASSEMBLED],
         ['Yours', spriteNames().filter((n) => isOverridden(n))],
         ['Pack', spriteNames().filter((n) => !isOverridden(n))],
@@ -713,24 +841,34 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
   const tabBtns = new Map<Tab, HTMLButtonElement>();
   function renderTab(): void {
     useButtons.length = 0;
+    window.clearInterval(animTimer);
     clear(body);
     if (tab !== 'scenery') { moveMode = false; tableDrag = false; board?.markProp(null); }
     palette.classList.toggle('hidden', tab !== 'scenery' || !board);
     overlay.classList.toggle('has-palette', tab === 'scenery' && !!board);
     if (tab === 'scenery' && board) renderPalette();
     board?.setSpaceClick(tab === 'spaces' ? (i) => { spaceIdx = i; renderTab(); } : () => {});
-    body.appendChild(tab === 'sheet' ? sheetTab() : tab === 'compose' ? composeTab() : tab === 'sprites' ? spritesTab() : tab === 'spaces' ? spacesTab() : tab === 'scenery' ? sceneryTab() : slotsTab());
+    body.appendChild(tab === 'sheet' ? sheetTab() : tab === 'compose' ? composeTab() : tab === 'animate' ? animateTab() : tab === 'sprites' ? spritesTab() : tab === 'spaces' ? spacesTab() : tab === 'scenery' ? sceneryTab() : slotsTab());
     for (const [t, b] of tabBtns) b.classList.toggle('btn--blue', t === tab);
     setCurrent(current);
     const mine = Object.keys(art.sprites).length, spaces = Object.keys(art.spaces).length;
     foot.textContent = `${mine} sprite${mine === 1 ? '' : 's'} of yours · ${spaces} space${spaces === 1 ? '' : 's'} customised · scenery: ${art.props ? `${art.props.length} props (custom)` : 'default layout'} · saved in this browser`;
   }
-  const tabs = ([['sheet', 'Sheet'], ['compose', 'Compose'], ['sprites', 'Sprites'], ['spaces', 'Spaces'], ['scenery', 'Scenery'], ['slots', 'Slots']] as [Tab, string][]).map(([t, label]) => {
-    const b = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { tab = t; renderTab(); } }, label);
+  const tabs = ([['sheet', 'Sheet'], ['compose', 'Compose'], ['animate', 'Animate'], ['sprites', 'Sprites'], ['spaces', 'Spaces'], ['scenery', 'Scenery'], ['slots', 'Slots']] as [Tab, string][]).map(([t, label]) => {
+    const b = h('button', { class: 'btn btn--sm', type: 'button', onClick: () => { tab = t; showPanel(true); renderTab(); } }, label);
     tabBtns.set(t, b);
     return b;
   });
-  const chip = h('button', { class: 'arted__chip', type: 'button', title: 'The current art: what the “← use” buttons apply. Click to browse sprites.', onClick: () => { tab = 'sprites'; renderTab(); } });
+  const chip = h('button', { class: 'arted__chip', type: 'button', title: 'The current art: what the “← use” buttons apply. Click to browse sprites.', onClick: () => { tab = 'sprites'; showPanel(true); renderTab(); } });
+  let panelShown = true;
+  const panelBtn = h('button', { class: 'btn btn--sm', type: 'button', title: 'Hide or show the editor panel (the palette stays)', onClick: () => showPanel(!panelShown) }, '◀ Panel');
+  function showPanel(on: boolean): void {
+    panelShown = on;
+    panel.classList.toggle('hidden', !on);
+    overlay.classList.toggle('panel-hidden', !on);
+    panelBtn.textContent = on ? '◀ Panel' : '▶ Panel';
+    panelBtn.classList.toggle('btn--blue', !on);
+  }
   const undoBtn = h('button', { class: 'btn btn--sm', type: 'button', title: 'Undo (Ctrl+Z)', onClick: () => void undo() }, 'Undo');
   const redoBtn = h('button', { class: 'btn btn--sm', type: 'button', title: 'Redo (Ctrl+Shift+Z)', onClick: () => void redoLast() }, 'Redo');
   function updateBar(): void {
@@ -761,18 +899,20 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
       h('li', null, h('b', null, 'Sheet'), ': drag over the tiles you want. The grid snaps a whole tile at a time and lines each tile up with the gaps around it, so nothing is cut off. Save it under a name, or just leave it as the current art.'),
       h('li', null, h('b', null, 'Background'), ': the key colours and whatever surrounds the selection are flooded away from the edges (“auto background”). Anything left over: click it in the preview to erase that patch, shift+click to make the colour transparent everywhere.'),
       h('li', null, h('b', null, 'Compose'), ': stamp the current art into a grid cell by cell to connect tiles into one bigger sprite (flip it for mirrored pieces), then use or save the result.'),
-      h('li', null, h('b', null, 'Sprites'), ': every sprite in the pack and every one you made. Click one to make it the current art.'),
+      h('li', null, h('b', null, 'Animate'), ': add frames (or split a strip of frames in one go), set the speed, save. The animation shows up in the Scenery palette and plays on the table.'),
+      h('li', null, h('b', null, 'Sprites'), ': every sprite in the pack and every one you made. Click one to make it the current art, or “Edit in Sheet” to touch it up and save it under the same name.'),
       h('li', null, h('b', null, 'Spaces'), ': click a space on the mini board (or on the 3D board) and give it a ground strip and a decoration with “← use”.'),
       h('li', null, h('b', null, 'Scenery'), ': the hills, pipes and clouds around the table. Drag art from the list on the right straight onto the 3D table, grab a prop on the table to move it, or drag it on the map. Delete removes the selected prop.'),
       h('li', null, h('b', null, 'Slots'), ': the logo, houses, decks, dice and other art the board draws by name.')),
     h('b', null, 'Shortcuts'),
     h('ul', null,
       h('li', null, 'Sheet: arrows nudge the selection, shift+arrows resize it, ctrl+arrows move a whole tile. Ctrl+wheel zooms, right-drag pans.'),
-      h('li', null, 'Ctrl+Z undoes, Ctrl+Shift+Z redoes. Esc stops picking or moving.'),
+      h('li', null, 'Ctrl+Z undoes, Ctrl+Shift+Z redoes. Esc stops picking or moving. “◀ Panel” hides the panel to see more of the table.'),
       h('li', null, 'Everything saves in this browser as you go. Export JSON to keep a copy or move it to another browser.')));
   const bar = h('div', { class: 'arted__bar paper paper--flat' },
     h('b', { class: 'arted__title' }, 'Art editor'),
     h('span', { class: 'arted__tabs' }, ...tabs),
+    panelBtn,
     chip,
     h('span', { class: 'arted__grow' }),
     undoBtn, redoBtn,
@@ -812,6 +952,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
   window.addEventListener('resize', onResize);
 
   function close(): void {
+    window.clearInterval(animTimer);
     boardEl?.classList.remove('is-editing');
     boardEl?.removeEventListener('pointerdown', onTableDown, true);
     boardEl?.removeEventListener('pointermove', onTableMove, true);

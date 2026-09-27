@@ -70,6 +70,56 @@ await page.click('.sheetview button:has-text("Reset wand")');
 await page.waitForTimeout(200);
 await page.screenshot({ path: 'shots/arted-8-smb3cut.png' });
 
+// Animate: select the 4 SMB3 coin frames as one strip (grid origin 2,14), split into frames, save the animation
+const setNum = async (idx, v) => page.$$eval('.sheetview input[type=number]', (is, [i, val]) => { is[i].value = String(val); is[i].dispatchEvent(new Event('input')); }, [idx, v]);
+await setNum(2, 2); await setNum(3, 14);
+await page.selectOption('.sheetview select >> nth=1', 'auto');
+await page.mouse.move(...p3(330, 90)); await page.mouse.down(); await page.mouse.move(...p3(380, 90), { steps: 4 }); await page.mouse.up();
+await page.waitForTimeout(300);
+console.log('coin strip cut:', await page.textContent('.arted__row--preview .muted'));
+await page.click('.arted__tabs button:has-text("Animate")');
+await page.waitForTimeout(300);
+await page.fill('.arted__tab input[placeholder="animation name"]', 'coin_spin');
+await page.click('.arted__tab button:has-text("Split current art into")');
+await page.waitForTimeout(600);
+console.log('frames after split:', await page.locator('.arted__frame').count(), 'sprites:', Object.keys((await saved()).sprites ?? {}));
+await page.click('.arted__tab button:has-text("Save animation")');
+await page.waitForTimeout(500);
+console.log('anims saved:', JSON.stringify((await saved()).anims));
+await page.screenshot({ path: 'shots/arted-11-animate.png' });
+// Scenery: drag the animation from the palette onto the table
+await page.click('.arted__tabs button:has-text("Scenery")');
+await page.waitForTimeout(500);
+await page.fill('.arted__palette input', 'coin_spin');
+await page.waitForTimeout(150);
+const animItem = page.locator('.arted__pal', { hasText: 'anim:coin_spin' }).first();
+const ab = await animItem.boundingBox();
+await page.mouse.move(ab.x + 30, ab.y + ab.height / 2); await page.mouse.down();
+await page.mouse.move(900, 650, { steps: 6 }); await page.mouse.move(930, 660, { steps: 3 }); await page.mouse.up();
+await page.waitForTimeout(800);
+const animProp = ((await saved()).props ?? []).find((p) => p.sprite === 'anim:coin_spin');
+console.log('animated prop placed:', JSON.stringify(animProp));
+await page.click('.arted__tab button:has-text("Look at")');
+await page.waitForTimeout(500);
+await page.screenshot({ path: 'shots/arted-12-animprop.png' });
+await page.waitForTimeout(200);
+await page.screenshot({ path: 'shots/arted-12-animprop-b.png' });
+// panel toggle: hide the panel, palette stays; a tab click brings it back
+await page.click('.arted__bar button:has-text("Panel")');
+await page.waitForTimeout(200);
+console.log('panel hidden:', !(await page.isVisible('.arted__panel')), 'palette visible:', await page.isVisible('.arted__palette'));
+await page.screenshot({ path: 'shots/arted-13-nopanel.png' });
+await page.click('.arted__tabs button:has-text("Sheet")');
+await page.waitForTimeout(300);
+console.log('panel back:', await page.isVisible('.arted__panel'));
+// back to the SMB3 ? block for the compose test
+await page.selectOption('.sheetview select >> nth=0', { label: 'smb3-tiles.png (924×1173)' });
+await page.selectOption('.sheetview select >> nth=1', 'off');
+await page.$eval('.sheetview input[type=range]', (el) => { el.value = '1'; el.dispatchEvent(new Event('input')); });
+await page.waitForTimeout(300);
+{ const b = await canvas.boundingBox(); await page.mouse.move(b.x + 325.5, b.y + 14.5); await page.mouse.down(); await page.mouse.move(b.x + 340.5, b.y + 29.5, { steps: 4 }); await page.mouse.up(); }
+await page.waitForTimeout(300);
+
 // Compose tab: stamp the ? block twice side by side, use it, then save it
 await page.click('.arted__tabs button:has-text("Compose")');
 await page.waitForTimeout(400);
@@ -116,6 +166,18 @@ await page.waitForTimeout(200);
 console.log('detail:', (await page.textContent('.arted__detail')).replace(/\s+/g, ' ').trim());
 await page.screenshot({ path: 'shots/arted-2-sprites.png' });
 
+// Edit in Sheet: open test_block, erase one pixel with a right-click, save it under the same name
+const beforeEdit = (await saved()).sprites.test_block;
+await page.click('.arted__detail button:has-text("Edit in Sheet")');
+await page.waitForTimeout(500);
+console.log('editing source:', await page.$eval('.sheetview select', (s) => s.options[s.selectedIndex].textContent), 'selection:', (await numFields()).slice(4).join(','), 'name:', await page.inputValue('.arted input[list="arted-names"]'));
+{ const pv = await page.locator('.arted__preview').boundingBox(); await page.mouse.click(pv.x + pv.width / 2, pv.y + pv.height / 2, { button: 'right' }); }
+await page.waitForTimeout(200);
+console.log('after pixel erase:', await page.textContent('.arted__row--preview .muted'));
+await page.click('button:has-text("Save sprite")');
+await page.waitForTimeout(500);
+console.log('test_block replaced:', (await saved()).sprites.test_block !== beforeEdit, 'names:', Object.keys((await saved()).sprites));
+
 // Spaces tab: click space 5 on the mini board, then "use" for the decoration
 await page.click('.arted__tabs button:has-text("Spaces")');
 await page.waitForTimeout(600);
@@ -159,7 +221,7 @@ await page.screenshot({ path: 'shots/arted-4-scenery.png' });
 console.log('palette visible:', await page.isVisible('.arted__palette'), 'items:', await page.locator('.arted__pal').count());
 await page.fill('.arted__palette input', 'hill');
 await page.waitForTimeout(150);
-const hillItem = page.locator('.arted__pal', { hasText: /^hill$/ }).first();
+const hillItem = page.locator('.arted__pal:has(> span:text-is("hill"))').first();
 const hb = await hillItem.boundingBox();
 await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2); await page.mouse.down();
 await page.mouse.move(900, 600, { steps: 6 }); await page.mouse.move(950, 620, { steps: 4 }); await page.mouse.up();

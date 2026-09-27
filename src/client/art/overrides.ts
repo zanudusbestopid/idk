@@ -4,6 +4,8 @@ import { setSpriteOverride, spriteOverrides } from './pack.js';
 
 export interface PropDef { id: string; sprite: string; x: number; y: number; z: number; h: number; float?: boolean }
 export interface SpaceArt { strip?: string; decor?: string; decorH?: number }
+/** An animated prop: sprite names shown in turn, `ms` per frame. Props use it as the art 'anim:<name>'. */
+export interface AnimDef { frames: string[]; ms: number }
 export interface ArtOverrides {
   version: 1;
   /** sprite name → PNG data URL */
@@ -12,10 +14,12 @@ export interface ArtOverrides {
   spaces: Record<string, SpaceArt>;
   /** null: the build's default scenery */
   props: PropDef[] | null;
+  /** animation name → frames */
+  anims: Record<string, AnimDef>;
 }
 
 const KEY = 'pt.art';
-export const art: ArtOverrides = { version: 1, sprites: {}, spaces: {}, props: null };
+export const art: ArtOverrides = { version: 1, sprites: {}, spaces: {}, props: null, anims: {} };
 const listeners = new Set<() => void>();
 
 export function onArtChange(fn: () => void): () => void { listeners.add(fn); return () => listeners.delete(fn); }
@@ -36,6 +40,8 @@ export async function applyArt(data: Partial<ArtOverrides>): Promise<void> {
   art.sprites = { ...(data.sprites ?? {}) };
   art.spaces = { ...(data.spaces ?? {}) };
   art.props = Array.isArray(data.props) ? data.props.map((p) => ({ ...p })) : null;
+  art.anims = {};
+  for (const [name, a] of Object.entries(data.anims ?? {})) if (a && Array.isArray(a.frames)) art.anims[name] = { frames: a.frames.filter((f) => typeof f === 'string'), ms: Number(a.ms) || 150 };
   await Promise.all(Object.entries(art.sprites).map(async ([name, url]) => { try { setSpriteOverride(name, await decode(url)); } catch { delete art.sprites[name]; } }));
   notify();
 }
@@ -61,7 +67,7 @@ export async function importArt(json: string): Promise<void> {
 }
 
 export async function resetArt(): Promise<void> {
-  await applyArt({ sprites: {}, spaces: {}, props: null });
+  await applyArt({ sprites: {}, spaces: {}, props: null, anims: {} });
   try { localStorage.removeItem(KEY); } catch { /* ignore */ }
 }
 
@@ -96,3 +102,17 @@ export function setProps(props: PropDef[] | null): void {
   saveArt();
   notify();
 }
+
+export function setAnim(name: string, def: AnimDef): void {
+  art.anims[name] = { frames: [...def.frames], ms: Math.max(30, Math.round(def.ms) || 150) };
+  saveArt();
+  notify();
+}
+
+export function removeAnim(name: string): void {
+  delete art.anims[name];
+  saveArt();
+  notify();
+}
+
+export function animNames(): string[] { return Object.keys(art.anims).sort(); }

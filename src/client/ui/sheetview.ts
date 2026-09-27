@@ -94,14 +94,15 @@ export class SheetView {
   keys = new Set<number>();
   /** Flood the background away from the cut's edges (key colours plus the colours found around the selection). */
   autoBg = true;
-  /** Wand clicks on the preview: erase the contiguous colour region at these cut pixels. */
-  edits: { x: number; y: number }[] = [];
+  /** Wand clicks on the preview: erase the contiguous colour region at these cut pixels (or one pixel). */
+  edits: { x: number; y: number; pixel?: boolean }[] = [];
   sel: Rect | null = null;
   cut: Cut | null = null;
   /** The cut before trimming (what preview clicks refer to). */
   private raw: HTMLCanvasElement | null = null;
   private trimOff = { x: 0, y: 0 };
   private previewScale = 1;
+  private autoBgIn = h('input', { type: 'checkbox', checked: true });
   onCut: (cut: Cut | null) => void = () => {};
   onMessage: (text: string, kind?: 'info' | 'error') => void = () => {};
 
@@ -143,10 +144,10 @@ export class SheetView {
     degapIn.addEventListener('change', () => { this.degap = degapIn.checked; this.rebuild(); });
     const trimIn = h('input', { type: 'checkbox', checked: this.trim });
     trimIn.addEventListener('change', () => { this.trim = trimIn.checked; this.rebuild(); });
-    const autoBgIn = h('input', { type: 'checkbox', checked: this.autoBg });
+    const autoBgIn = this.autoBgIn;
     autoBgIn.addEventListener('change', () => { this.autoBg = autoBgIn.checked; this.rebuild(); });
     this.preview.style.cursor = 'crosshair';
-    this.preview.title = 'Click a colour to erase that patch · shift+click: make the colour transparent everywhere';
+    this.preview.title = 'Click a colour to erase that patch · shift+click: make the colour transparent everywhere · right-click: erase one pixel';
     this.preview.addEventListener('pointerdown', (e) => this.previewClick(e));
     this.preview.addEventListener('contextmenu', (e) => e.preventDefault());
     const resetEdits = h('button', { class: 'btn btn--sm', type: 'button', title: 'Undo the wand clicks on this cut', onClick: () => { this.edits = []; this.rebuild(); } }, 'Reset wand');
@@ -374,6 +375,7 @@ export class SheetView {
       if (e.x < 0 || e.y < 0 || e.x >= out.width || e.y >= out.height) continue;
       const i = (e.y * out.width + e.x) * 4;
       if (d[i + 3] === 0) continue;
+      if (e.pixel) { d[i + 3] = 0; continue; }
       const target = rgb(d[i], d[i + 1], d[i + 2]);
       floodErase(id, [e.y * out.width + e.x], (col) => col === target);
     }
@@ -415,16 +417,29 @@ export class SheetView {
   }
   private previewClick(e: PointerEvent): void {
     const raw = this.raw;
-    if (!raw || !this.cut || e.button !== 0) return;
+    if (!raw || !this.cut || (e.button !== 0 && e.button !== 2)) return;
     const r = this.preview.getBoundingClientRect();
     const x = Math.floor((e.clientX - r.left) / this.previewScale) + this.trimOff.x;
     const y = Math.floor((e.clientY - r.top) / this.previewScale) + this.trimOff.y;
     if (x < 0 || y < 0 || x >= raw.width || y >= raw.height) return;
     const px = raw.getContext('2d')!.getImageData(x, y, 1, 1).data;
     if (px[3] === 0) return;
-    if (e.shiftKey) { this.keys.add(rgb(px[0], px[1], px[2])); this.renderKeys(); }
+    if (e.button === 2) this.edits.push({ x, y, pixel: true });
+    else if (e.shiftKey) { this.keys.add(rgb(px[0], px[1], px[2])); this.renderKeys(); }
     else this.edits.push({ x, y });
     this.rebuild();
+  }
+  /** Open a finished sprite as a sheet of its own (whole sprite selected, nothing keyed) so it can be touched up and saved again. */
+  loadSprite(name: string, canvas: HTMLCanvasElement): void {
+    const existing = this.sources.find((s) => s.name === `sprite: ${name}`);
+    if (existing) this.sources.splice(this.sources.indexOf(existing), 1);
+    this.addSource(sheetImage(`sprite: ${name}`, canvas, canvas.width, canvas.height, false), true);
+    this.keys.clear();
+    this.renderKeys();
+    this.autoBg = false;
+    this.autoBgIn.checked = false;
+    this.setZoom(Math.max(2, Math.min(8, Math.floor(400 / Math.max(canvas.width, canvas.height)))));
+    this.setSelection({ x: 0, y: 0, w: canvas.width, h: canvas.height });
   }
   private rebuild(): void {
     this.cut = this.buildCut();

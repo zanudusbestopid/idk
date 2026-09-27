@@ -588,6 +588,13 @@ body[data-theme] .arted .btn, .arted .btn { font-family: var(--font-ui); font-we
 .arted__pal.is-dragging { opacity: 0.5; cursor: grabbing; }
 .arted__pal-head { font-size: 0.7em; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 6px; }
 .arted.has-palette .arted__help { right: 196px; }
+.arted__pal-edit { margin-left: auto; flex: none; padding: 0 5px; font: inherit; font-size: 0.95em; line-height: 1.4; border: 1px solid var(--paper-3); border-radius: 4px; background: var(--paper-edge); color: var(--ink); cursor: pointer; }
+.arted__pal-edit:hover { background: var(--paper-2); border-color: var(--ink); }
+.arted__frames { display: flex; gap: 4px; flex-wrap: wrap; }
+.arted__frame { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; border: 2px solid var(--paper-3); border-radius: 6px; font-size: 0.7em; }
+.arted__frame .btns { display: flex; gap: 2px; }
+.arted__frame .btns .btn { padding: 0.1em 0.35em; font-size: 0.8em; }
+.arted__animprev { image-rendering: pixelated; border: 2px solid var(--ink); border-radius: 4px; background: repeating-conic-gradient(#cfc6b2 0 25%, #e6dcc5 0 50%) 0 0 / 12px 12px; flex: none; }
 .arted__help { position: absolute; right: 12px; top: 74px; width: min(340px, calc(100% - 24px)); max-height: calc(100% - 90px); overflow: auto; padding: 12px 14px; font-size: 0.9em; line-height: 1.4; }
 .arted__help ol, .arted__help ul { margin: 6px 0 12px; padding-left: 20px; }
 .arted__help li { margin: 4px 0; }
