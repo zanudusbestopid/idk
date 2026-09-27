@@ -86,7 +86,6 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
   let moveMode = false;
   let tableDrag = false;
   let filter = '';
-  let mapRange = 32;
   const recent: string[] = [];
   const useButtons: HTMLButtonElement[] = [];
   const thumbCache = new Map<string, HTMLCanvasElement | null>();
@@ -514,93 +513,10 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
 
   // ---------- scenery tab ----------
   function commitProps(): void { setProps(props); }
-  function drawSceneMap(canvas: HTMLCanvasElement, hoverId: string | null): void {
-    const w = contentWidth();
-    canvas.width = w; canvas.height = w;
-    const ctx = canvas.getContext('2d')!;
-    const R = mapRange;
-    const X = (x: number) => (x / R + 1) / 2 * w, Z = (z: number) => (z / R + 1) / 2 * w;
-    ctx.fillStyle = '#5c9a3c'; ctx.fillRect(0, 0, w, w);
-    ctx.fillStyle = '#4f8a33';
-    for (let i = -R; i <= R; i += 4) { ctx.fillRect(X(i), 0, 1, w); ctx.fillRect(0, Z(i), w, 1); }
-    ctx.fillStyle = '#5c8fd6'; ctx.strokeStyle = '#161616'; ctx.lineWidth = 2;
-    ctx.fillRect(X(-BOARD_HALF), Z(-BOARD_HALF), (X(BOARD_HALF) - X(-BOARD_HALF)), (Z(BOARD_HALF) - Z(-BOARD_HALF)));
-    ctx.strokeRect(X(-BOARD_HALF), Z(-BOARD_HALF), (X(BOARD_HALF) - X(-BOARD_HALF)), (Z(BOARD_HALF) - Z(-BOARD_HALF)));
-    ctx.fillStyle = '#161616'; ctx.font = '11px ui-monospace, Menlo, Consolas, monospace'; ctx.textBaseline = 'top';
-    ctx.fillText('board', X(-BOARD_HALF) + 4, Z(-BOARD_HALF) + 3);
-    ctx.fillText(`±${R} units · the camera side is the bottom`, 4, 3);
-    ctx.imageSmoothingEnabled = false;
-    for (const p of props) {
-      const img = spriteThumb(p.sprite);
-      const px = X(p.x), pz = Z(p.z);
-      const sel = p.id === propId, hov = p.id === hoverId;
-      if (img) {
-        const s = Math.max(10, Math.min(28, p.h * (w / R) * 0.5));
-        const iw = s * img.width / Math.max(img.width, img.height), ih = s * img.height / Math.max(img.width, img.height);
-        if (p.float) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.ellipse(px, pz, iw / 2 + 3, ih / 2 + 3, 0, 0, Math.PI * 2); ctx.fill(); }
-        ctx.drawImage(img, px - iw / 2, pz - ih / 2, iw, ih);
-      } else { ctx.fillStyle = '#d9413a'; ctx.beginPath(); ctx.arc(px, pz, 4, 0, Math.PI * 2); ctx.fill(); }
-      if (sel || hov) {
-        ctx.strokeStyle = sel ? '#fbd000' : 'rgba(255,255,255,0.9)'; ctx.lineWidth = sel ? 3 : 2;
-        ctx.beginPath(); ctx.arc(px, pz, 16, 0, Math.PI * 2); ctx.stroke();
-        const label = p.id;
-        const tw = ctx.measureText(label).width + 8;
-        ctx.fillStyle = 'rgba(22,22,22,0.85)'; ctx.fillRect(px - tw / 2, pz + 18, tw, 14);
-        ctx.fillStyle = sel ? '#fbd000' : '#fff'; ctx.fillText(label, px - tw / 2 + 4, pz + 20);
-      }
-    }
-  }
   function sceneryTab(): HTMLElement {
     const p = propOf(propId);
     board?.markProp(p?.id ?? null);
-    const map = document.createElement('canvas');
-    map.className = 'arted__map';
-    map.title = 'Click a prop to select it, drag to move it, double-click to look at it';
-    let hoverId: string | null = null;
-    let dragging = false;
-    const rectOf = () => map.getBoundingClientRect();
-    const toWorld = (e: PointerEvent): { x: number; z: number } => { const r = rectOf(); return { x: ((e.clientX - r.left) / r.width * 2 - 1) * mapRange, z: ((e.clientY - r.top) / r.height * 2 - 1) * mapRange }; };
-    const nearest = (e: PointerEvent): PropDef | null => {
-      const r = rectOf();
-      let best: PropDef | null = null, bd = 16;
-      for (const q of props) {
-        const px = (q.x / mapRange + 1) / 2 * r.width, pz = (q.z / mapRange + 1) / 2 * r.height;
-        const d = Math.hypot(px - (e.clientX - r.left), pz - (e.clientY - r.top));
-        if (d < bd) { bd = d; best = q; }
-      }
-      return best;
-    };
-    map.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      const q = nearest(e);
-      if (!q) return;
-      if (q.id !== propId) { propId = q.id; renderTab(); return; }
-      snapshot();
-      dragging = true;
-      map.setPointerCapture(e.pointerId);
-    });
-    map.addEventListener('pointermove', (e) => {
-      if (dragging && p) {
-        const g = toWorld(e);
-        p.x = Math.round(g.x * 4) / 4; p.z = Math.round(g.z * 4) / 4;
-        if (board && !board.moveProp(p)) board.rebuildScenery();
-        drawSceneMap(map, hoverId);
-        posX.value = String(p.x); posZ.value = String(p.z);
-        return;
-      }
-      const q = nearest(e);
-      const id = q?.id ?? null;
-      if (id !== hoverId) { hoverId = id; drawSceneMap(map, hoverId); }
-      map.style.cursor = q ? (q.id === propId ? 'grab' : 'pointer') : '';
-    });
-    const endDrag = () => { if (!dragging) return; dragging = false; commitProps(); updateBar(); };
-    map.addEventListener('pointerup', endDrag);
-    map.addEventListener('pointercancel', endDrag);
-    map.addEventListener('pointerleave', () => { if (!dragging) { hoverId = null; drawSceneMap(map, null); } });
-    map.addEventListener('dblclick', () => { if (p) board?.focusPoint(p.x, p.y + p.h / 2, p.z, Math.max(6, p.h * 4)); });
-    const rangeBtns = [16, 32, 48].map((r) => h('button', { class: `btn btn--sm${mapRange === r ? ' btn--blue' : ''}`, type: 'button', onClick: () => { mapRange = r; renderTab(); } }, `±${r}`));
-
-    const list = h('select', { size: '6', class: 'arted__list' }, ...props.map((q) => h('option', { value: q.id }, `${q.id} · ${q.sprite}`)));
+    const list = h('select', { size: '12', class: 'arted__list' }, ...props.map((q) => h('option', { value: q.id }, `${q.id} · ${q.sprite}`)));
     list.value = propId ?? '';
     list.addEventListener('change', () => { propId = list.value; renderTab(); });
     const uniqueId = (base: string): string => { let i = 1; let id = base; while (props.some((q) => q.id === id)) id = `${base}-${++i}`; return id; };
@@ -610,27 +526,25 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
       const def: PropDef = { id, sprite: 'bush:3', x: 0, y: 0, z: BOARD_HALF + 3, h: 1 };
       if (current) { const n = useCurrent(`${id}_art`); if (n) def.sprite = n; }
       props.push(def); propId = id; commitProps(); afterArt();
-      toast(`Added “${id}” in front of the board. Drag it on the map, or turn on “Move on table”.`);
+      toast(`Added “${id}” in front of the board. Drag it on the table to move it.`);
     };
     const dup = (): void => { if (!p) return; snapshot(); const id = uniqueId(p.id); props.push({ ...p, id, x: p.x + 1 }); propId = id; commitProps(); afterArt(); };
     const remove = (): void => { if (!p) return; snapshot(); props = props.filter((q) => q !== p); propId = props[0]?.id ?? null; commitProps(); afterArt(); };
     const reset = (): void => { snapshot(); setProps(null); afterArt(); toast('Scenery back to the built-in layout.'); };
-    const moveLive = (): void => { if (p && board && !board.moveProp(p)) board.rebuildScenery(); commitProps(); drawSceneMap(map, hoverId); };
+    const moveLive = (): void => { if (p && board && !board.moveProp(p)) board.rebuildScenery(); commitProps(); };
     const posX = num(p?.x ?? 0, 0.5, (v) => { if (p) { p.x = v; moveLive(); } });
     const posZ = num(p?.z ?? 0, 0.5, (v) => { if (p) { p.z = v; moveLive(); } });
     const moveBtn = h('button', { class: `btn btn--sm${moveMode ? ' btn--blue' : ''}`, type: 'button', disabled: !p, title: 'Click or drag on the 3D table to put the selected prop there', onClick: () => { moveMode = !moveMode; renderTab(); if (moveMode) toast('Click or drag on the table. Esc stops.'); } }, moveMode ? 'Moving on table… (Esc)' : 'Move on table');
     const heightIn = h('input', { type: 'range', min: '0.2', max: '8', step: '0.1', value: String(p?.h ?? 1), style: { width: '120px' } });
     let hSnap = false;
     heightIn.addEventListener('input', () => { if (!p) return; if (!hSnap) { snapshot(); hSnap = true; } p.h = Number(heightIn.value); heightNum.value = heightIn.value; });
-    heightIn.addEventListener('change', () => { hSnap = false; if (!p) return; commitProps(); board?.rebuildScenery(); board?.markProp(p.id); drawSceneMap(map, hoverId); });
-    const heightNum = num(p?.h ?? 1, 0.1, (v) => { if (p) { snapshot(); p.h = Math.max(0.1, v); heightIn.value = String(p.h); commitProps(); board?.rebuildScenery(); board?.markProp(p.id); drawSceneMap(map, hoverId); } }, 60);
+    heightIn.addEventListener('change', () => { hSnap = false; if (!p) return; commitProps(); board?.rebuildScenery(); board?.markProp(p.id); });
+    const heightNum = num(p?.h ?? 1, 0.1, (v) => { if (p) { snapshot(); p.h = Math.max(0.1, v); heightIn.value = String(p.h); commitProps(); board?.rebuildScenery(); board?.markProp(p.id); } }, 60);
     const el = h('div', { class: 'arted__tab arted__tab--scroll' },
-      h('p', { class: 'arted__hint' }, 'Drag art from the list on the right straight onto the 3D table, or grab a prop on the table to move it. The map below shows everything from above.'),
-      map,
-      h('div', { class: 'arted__row' }, h('label', null, 'Map'), ...rangeBtns, h('span', { class: 'arted__grow' }),
-        h('button', { class: 'btn btn--sm', type: 'button', disabled: !p, title: 'Swing the camera to the selected prop', onClick: () => { if (p) board?.focusPoint(p.x, p.y + p.h / 2, p.z, Math.max(6, p.h * 4)); } }, 'Look at')),
+      h('p', { class: 'arted__hint' }, 'Drag art from the list on the right straight onto the 3D table, or grab a prop on the table to move it. Pick a prop below to edit it.'),
       h('div', { class: 'arted__row arted__row--top' }, list,
         h('div', { class: 'arted__btncol' },
+          h('button', { class: 'btn btn--sm', type: 'button', disabled: !p, title: 'Swing the camera to the selected prop', onClick: () => { if (p) board?.focusPoint(p.x, p.y + p.h / 2, p.z, Math.max(6, p.h * 4)); } }, 'Look at'),
           h('button', { class: 'btn btn--sm btn--good', type: 'button', onClick: add }, current ? `Add “${current.kind === 'cut' ? 'cut' : current.name}”` : 'Add prop'),
           h('button', { class: 'btn btn--sm', type: 'button', disabled: !p, onClick: dup }, 'Duplicate'),
           h('button', { class: 'btn btn--sm btn--warn', type: 'button', disabled: !p, onClick: remove }, 'Remove'),
@@ -646,8 +560,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
           h('label', null, 'y'), num(p.y, 0.25, (v) => { p.y = v; moveLive(); }),
           h('label', { class: 'arted__check' }, h('input', { type: 'checkbox', checked: !!p.float, onChange: (e: Event) => { snapshot(); p.float = (e.target as HTMLInputElement).checked; moveLive(); } }), ' floats')),
         h('div', { class: 'arted__row' }, h('label', null, 'Height'), heightIn, heightNum, h('span', { class: 'muted small' }, 'units (a token is about 0.8)'), moveBtn),
-        h('p', { class: 'arted__hint' }, 'x runs left to right, z towards the camera (the board edge is at ±8.6), y lifts it off the table. Grab any prop on the 3D table to drag it, drag it on the map, or type numbers. Delete removes the selected prop.')) : h('p', { class: 'arted__hint' }, 'No scenery yet. Drag art from the list on the right onto the table, add a prop, or restore the default layout.'));
-    requestAnimationFrame(() => drawSceneMap(map, null));
+        h('p', { class: 'arted__hint' }, 'x runs left to right, z towards the camera (the board edge is at ±8.6), y lifts it off the table. Grab any prop on the 3D table to drag it, or type numbers. Delete removes the selected prop.')) : h('p', { class: 'arted__hint' }, 'No scenery yet. Drag art from the list on the right onto the table, add a prop, or restore the default layout.'));
     return el;
   }
   // moving props on the 3D table (capture phase, so the camera does not turn): grab a prop directly,
@@ -902,7 +815,7 @@ export function openArtEditor(root: HTMLElement, opts: { board: Board3D | null; 
       h('li', null, h('b', null, 'Animate'), ': add frames (or split a strip of frames in one go), set the speed, save. The animation shows up in the Scenery palette and plays on the table.'),
       h('li', null, h('b', null, 'Sprites'), ': every sprite in the pack and every one you made. Click one to make it the current art, or “Edit in Sheet” to touch it up and save it under the same name.'),
       h('li', null, h('b', null, 'Spaces'), ': click a space on the mini board (or on the 3D board) and give it a ground strip and a decoration with “← use”.'),
-      h('li', null, h('b', null, 'Scenery'), ': the hills, pipes and clouds around the table. Drag art from the list on the right straight onto the 3D table, grab a prop on the table to move it, or drag it on the map. Delete removes the selected prop.'),
+      h('li', null, h('b', null, 'Scenery'), ': the hills, pipes and clouds around the table. Drag art from the list on the right straight onto the 3D table, or grab a prop on the table to move it. Pick one in the list to edit it. Delete removes the selected prop.'),
       h('li', null, h('b', null, 'Slots'), ': the logo, houses, decks, dice and other art the board draws by name.')),
     h('b', null, 'Shortcuts'),
     h('ul', null,
