@@ -3,6 +3,9 @@
 import { build } from 'esbuild';
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 const watch = process.argv.includes('--watch');
 await mkdir('dist/public', { recursive: true });
@@ -62,7 +65,7 @@ console.log('Built dist/paper-tycoon.js');
 //    form the claude.ai Artifact tool expects (no document skeleton).
 // Fonts are embedded (from the @fontsource packages) so the standalone page needs no network.
 async function fontFace(family, file, weight) {
-  const data = await readFile(`node_modules/@fontsource/${file}`);
+  const data = await readFile(join(dirname(require.resolve('@fontsource/fredoka/package.json')), '..', file));
   return `@font-face{font-family:'${family}';font-style:normal;font-weight:${weight};font-display:swap;src:url(data:font/woff2;base64,${data.toString('base64')}) format('woff2');}`;
 }
 const fontCss = (await Promise.all([

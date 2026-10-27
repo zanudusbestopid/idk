@@ -1,34 +1,12 @@
 {
-  "name": "paper-tycoon",
-  "version": "0.1.0",
+  "name": "idk-games",
   "private": true,
   "type": "module",
-  "description": "Paper Tycoon \u2013 an online property-trading board game in a paper-craft style",
+  "workspaces": ["games/*"],
   "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "build": "node scripts/build.mjs",
-    "start": "node scripts/build.mjs && node dist/paper-tycoon.js",
-    "e2e": "node scripts/e2e.mjs"
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
   },
-  "devDependencies": {
-    "@types/node": "^26.6.3",
-    "@types/three": "^0.186.0",
-    "@types/ws": "^8.18.1",
-    "esbuild": "^0.28.2",
-    "playwright": "^1.63.0",
-    "typescript": "^7.0.2",
-    "vitest": "^5.0.2",
-    "@fontsource/fredoka": "^5.0.0",
-    "@fontsource/patrick-hand": "^5.0.0",
-    "@fontsource/press-start-2p": "^5.0.0"
-  },
-  "dependencies": {
-    "cannon-es": "^0.20.0",
-    "three": "^0.186.1",
-    "ws": "^8.21.3"
-  },
-  "engines": {
-    "node": ">=18"
-  }
+  "engines": { "node": ">=18" }
 }
